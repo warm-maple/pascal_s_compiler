@@ -106,7 +106,9 @@ inline std::string CodeGenerator::generate(ProgramNode* program) {
     
     // C 头文件
     output << "#include <stdio.h>\n";
-    output << "#include <stdlib.h>\n\n";
+    output << "#include <stdlib.h>\n";
+    output << "#define true 1\n";
+    output << "#define false 0\n\n";
     
     // 收集函数前向声明
     for (const auto& decl : program->declarations) {
@@ -278,33 +280,63 @@ inline void CodeGenerator::visit(IfStatementNode& n) {
     indent();
     output << "if (";
     n.condition->accept(*this);
-    output << ") {\n";
-    indent_level++;
+    output << ") ";
+    
+    // 如果 then_branch 是复合语句，不需要额外的花括号
+    bool then_is_compound = (n.then_branch && dynamic_cast<CompoundStatementNode*>(n.then_branch.get()));
+    if (!then_is_compound) {
+        output << "{\n";
+        indent_level++;
+    }
+    
     if (n.then_branch) {
         n.then_branch->accept(*this);
     }
-    indent_level--;
-    if (n.else_branch) {
-        indent();
-        output << "} else {\n";
-        indent_level++;
-        n.else_branch->accept(*this);
+    
+    if (!then_is_compound) {
         indent_level--;
+        indent();
+        output << "}";
     }
-    indent();
-    output << "}\n";
+    
+    if (n.else_branch) {
+        output << " else ";
+        bool else_is_compound = dynamic_cast<CompoundStatementNode*>(n.else_branch.get());
+        if (!else_is_compound) {
+            output << "{\n";
+            indent_level++;
+        }
+        n.else_branch->accept(*this);
+        if (!else_is_compound) {
+            indent_level--;
+            indent();
+            output << "}";
+        }
+    }
+    output << "\n";
 }
 
 inline void CodeGenerator::visit(WhileStatementNode& n) {
     indent();
     output << "while (";
     n.condition->accept(*this);
-    output << ") {\n";
-    indent_level++;
+    output << ") ";
+    
+    bool body_is_compound = (n.body && dynamic_cast<CompoundStatementNode*>(n.body.get()));
+    if (!body_is_compound) {
+        output << "{\n";
+        indent_level++;
+    }
+    
     n.body->accept(*this);
-    indent_level--;
-    indent();
-    output << "}\n";
+    
+    if (!body_is_compound) {
+        indent_level--;
+        indent();
+        output << "}\n";
+    } else {
+        output << "\n";
+    }
 }
 
 inline void CodeGenerator::visit(ForStatementNode& n) {
@@ -313,24 +345,44 @@ inline void CodeGenerator::visit(ForStatementNode& n) {
     n.start->accept(*this);
     output << "; " << n.loop_var << (n.is_downto ? " >= " : " <= ");
     n.end->accept(*this);
-    output << "; " << n.loop_var << (n.is_downto ? "--" : "++") << ") {\n";
-    indent_level++;
+    output << "; " << n.loop_var << (n.is_downto ? "--" : "++") << ") ";
+    
+    bool body_is_compound = (n.body && dynamic_cast<CompoundStatementNode*>(n.body.get()));
+    if (!body_is_compound) {
+        output << "{\n";
+        indent_level++;
+    }
+    
     n.body->accept(*this);
-    indent_level--;
-    indent();
-    output << "}\n";
+    
+    if (!body_is_compound) {
+        indent_level--;
+        indent();
+        output << "}\n";
+    } else {
+        output << "\n";
+    }
 }
 
 inline void CodeGenerator::visit(ProcedureCallNode& n) {
     indent();
-    output << n.proc_name << "(";
-    bool first = true;
-    for (const auto& arg : n.arguments) {
-        if (!first) output << ", ";
-        first = false;
-        arg->accept(*this);
+    // 特殊处理 read 过程
+    if (n.proc_name == "read") {
+        output << "scanf(\"%d\", &";
+        if (!n.arguments.empty()) {
+            n.arguments[0]->accept(*this);
+        }
+        output << ");\n";
+    } else {
+        output << n.proc_name << "(";
+        bool first = true;
+        for (const auto& arg : n.arguments) {
+            if (!first) output << ", ";
+            first = false;
+            arg->accept(*this);
+        }
+        output << ");\n";
     }
-    output << ");\n";
 }
 
 inline void CodeGenerator::visit(WriteStatementNode& n) {

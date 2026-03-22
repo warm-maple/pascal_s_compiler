@@ -4,6 +4,7 @@
 #include "error.h"
 #include <cstring>
 #include <vector>
+#include <algorithm>
 
 extern int yylex();
 void yyerror(const char* m);
@@ -208,8 +209,13 @@ compound_stmt: BEGIN_KW {
     stmt_list.clear();
 } stmt_seq opt_semicolon END {
     auto cs = new pascal_s::CompoundStatementNode();
+    // 去重：避免重复添加相同的语句指针
+    std::vector<pascal_s::StatementNode*> seen;
     for (auto& s : stmt_list) {
-        if (s) cs->add_statement(std::unique_ptr<pascal_s::StatementNode>(s));
+        if (s && std::find(seen.begin(), seen.end(), s) == seen.end()) {
+            cs->add_statement(std::unique_ptr<pascal_s::StatementNode>(s));
+            seen.push_back(s);
+        }
     }
     stmt_list.clear();
     if (!stmt_list_stack.empty()) {
@@ -221,7 +227,7 @@ compound_stmt: BEGIN_KW {
 
 opt_semicolon: SEMICOLON | /* empty */;
 
-stmt_seq: stmt_seq stmt SEMICOLON | stmt SEMICOLON | stmt | /* empty */;
+stmt_seq: stmt_seq stmt SEMICOLON | /* empty */;
 
 stmt: IDENTIFIER ASSIGN expr {
     stmt_list.push_back(new pascal_s::AssignmentNode(
