@@ -346,11 +346,16 @@ public:
     std::string func_name;
     DataType return_type = DataType::TY_VOID;
     std::vector<ParameterInfo> parameters;
+    std::vector<std::unique_ptr<VariableDeclarationNode>> local_vars;  // 局部变量
     std::unique_ptr<CompoundStatementNode> body;
     bool is_procedure = false;
     
     FunctionDeclarationNode(const std::string& name = "", bool is_proc = false)
         : func_name(name), is_procedure(is_proc) {}
+    
+    void add_local_var(std::unique_ptr<VariableDeclarationNode> var) {
+        local_vars.push_back(std::move(var));
+    }
     
     std::string node_type() const override { return "FunctionDeclaration"; }
     void accept(ASTVisitor& visitor) override;

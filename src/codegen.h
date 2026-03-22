@@ -47,6 +47,8 @@ private:
     std::string current_func_name;  // 当前函数名（用于处理函数返回值）
     std::unordered_map<std::string, DataType> var_types;  // 变量类型映射
     std::unordered_map<std::string, std::vector<VariableDeclarationNode*>> func_local_vars;  // 函数局部变量
+    std::unordered_map<std::string, std::vector<ParameterInfo>> func_params;  // 函数参数信息
+    std::unordered_set<std::string> ref_params;  // 当前函数中的引用参数（var 参数）
     
     void indent();
     std::string c_operator(BinaryOp op);
@@ -54,6 +56,8 @@ private:
     std::string c_format_specifier(DataType t);
     void generate_forward_declarations();
     DataType get_identifier_type(const std::string& name);
+    bool is_ref_param(const std::string& name);  // 检查是否是引用参数
+    void generate_expression(ExpressionNode* expr, bool is_arg = false, int arg_index = -1, const std::string& func_name = "");
 };
 
 // 工具函数实现
@@ -141,28 +145,11 @@ inline std::string CodeGenerator::generate(ProgramNode* program) {
         }
     }
     
-    // 使用符号表识别局部变量（scope_level > 0）
-    // 注意：符号表查找返回最内层的符号，所以如果局部变量和全局变量同名，会返回局部变量
-    std::unordered_map<std::string, bool> is_local;
-    for (const auto& decl : program->declarations) {
-        if (auto* var = dynamic_cast<VariableDeclarationNode*>(decl.get())) {
-            auto sym = g_symbol_table.lookup(var->var_name);
-            // 如果符号的作用域级别 > 0，则是局部变量
-            if (sym && sym->scope_level > 0) {
-                is_local[var->var_name] = true;
-            }
-        }
-    }
-    
-    // 将局部变量分配到对应的函数
-    // 简单方法：按顺序处理，局部变量属于最近的前一个函数
-    std::string current_func;
+    // 从函数声明中获取局部变量
     for (const auto& decl : program->declarations) {
         if (auto* func = dynamic_cast<FunctionDeclarationNode*>(decl.get())) {
-            current_func = func->func_name;
-        } else if (auto* var = dynamic_cast<VariableDeclarationNode*>(decl.get())) {
-            if (is_local[var->var_name] && !current_func.empty()) {
-                func_local_vars[current_func].push_back(var);
+            for (const auto& var : func->local_vars) {
+                func_local_vars[func->func_name].push_back(var.get());
             }
         }
     }
@@ -245,6 +232,10 @@ inline void CodeGenerator::visit(StringLiteralNode& n) {
 }
 
 inline void CodeGenerator::visit(IdentifierNode& n) {
+    // 如果是引用参数，需要解引用
+    if (is_ref_param(n.name)) {
+        output << "*";
+    }
     output << n.name;
 }
 
@@ -283,10 +274,30 @@ inline void CodeGenerator::visit(UnaryExpressionNode& n) {
 inline void CodeGenerator::visit(FunctionCallNode& n) {
     output << n.func_name << "(";
     bool first = true;
-    for (const auto& arg : n.arguments) {
+    // 查找函数参数信息
+    auto it = func_params.find(n.func_name);
+    for (size_t i = 0; i < n.arguments.size(); i++) {
         if (!first) output << ", ";
         first = false;
-        arg->accept(*this);
+        
+        bool is_ref = false;
+        if (it != func_params.end() && i < it->second.size()) {
+            is_ref = it->second[i].is_reference;
+        }
+        
+        // 如果是引用参数，需要传递地址
+        // 但如果参数本身是引用参数（指针），则直接传递
+        if (is_ref) {
+            auto* arg_ident = dynamic_cast<IdentifierNode*>(n.arguments[i].get());
+            if (arg_ident && is_ref_param(arg_ident->name)) {
+                // 参数本身是引用参数，直接传递指针（不添加 & 也不解引用）
+                output << arg_ident->name;
+                continue;
+            } else {
+                output << "&";
+            }
+        }
+        n.arguments[i]->accept(*this);
     }
     output << ")";
 }
@@ -304,6 +315,7 @@ inline void CodeGenerator::visit(AssignmentNode& n) {
             }
         }
     }
+    // 直接生成目标，IdentifierNode 会处理引用参数的解引用
     n.target->accept(*this);
     output << " = ";
     n.value->accept(*this);
@@ -511,6 +523,9 @@ inline void CodeGenerator::visit(VariableDeclarationNode& n) {
 }
 
 inline void CodeGenerator::visit(FunctionDeclarationNode& n) {
+    // 保存函数参数信息
+    func_params[n.func_name] = n.parameters;
+    
     // 函数签名
     output << c_type(n.return_type) << " " << n.func_name << "(";
     
@@ -531,6 +546,14 @@ inline void CodeGenerator::visit(FunctionDeclarationNode& n) {
     // 设置当前函数名（用于处理函数返回值）
     std::string prev_func_name = current_func_name;
     current_func_name = n.func_name;
+    
+    // 设置当前函数的引用参数集合
+    ref_params.clear();
+    for (const auto& param : n.parameters) {
+        if (param.is_reference) {
+            ref_params.insert(param.name);
+        }
+    }
     
     indent_level++;
     
@@ -582,6 +605,10 @@ inline pascal_s::DataType CodeGenerator::get_identifier_type(const std::string& 
         return it->second;
     }
     return DataType::TY_INTEGER;  // 默认类型
+}
+
+inline bool CodeGenerator::is_ref_param(const std::string& name) {
+    return ref_params.find(name) != ref_params.end();
 }
 
 inline void CodeGenerator::visit(ProgramNode& n) {

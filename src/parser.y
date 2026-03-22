@@ -22,7 +22,8 @@ static pascal_s::StatementNode* stmt_result;
 static pascal_s::StatementNode* then_branch_temp = nullptr;  // 用于 if-else 保存 then 分支
 static std::string last_func_name;
 static std::vector<pascal_s::FunctionDeclarationNode*> pending_func_decls;  // 待处理的函数声明
-static std::vector<pascal_s::VariableDeclarationNode*> pending_var_decls;   // 待处理的变量声明
+static std::vector<pascal_s::VariableDeclarationNode*> pending_var_decls;   // 待处理的变量声明（全局）
+static std::vector<std::vector<pascal_s::VariableDeclarationNode*>> pending_local_var_decls;  // 局部变量栈
 
 static pascal_s::BinaryOp relop_to_binop(const char* op) {
     if (strcmp(op, "=") == 0) return pascal_s::BinaryOp::OP_EQ;
@@ -132,7 +133,12 @@ var_def: name_list COLON type_decl SEMICOLON {
     for (char* name : *$1) {
         g_symbol_table.insert(name, $3);
         auto var_decl = new pascal_s::VariableDeclarationNode(name, $3);
-        pending_var_decls.push_back(var_decl);
+        // 如果在函数内部，添加到局部变量列表
+        if (!pending_local_var_decls.empty()) {
+            pending_local_var_decls.back().push_back(var_decl);
+        } else {
+            pending_var_decls.push_back(var_decl);
+        }
         free(name);
     }
     delete $1;
@@ -161,6 +167,13 @@ subprog: func_hdr block SEMICOLON {
         func_decl->return_type = sym_entry->return_type;
         func_decl->parameters = sym_entry->params;
     }
+    // 添加局部变量
+    if (!pending_local_var_decls.empty()) {
+        for (auto* var : pending_local_var_decls.back()) {
+            func_decl->add_local_var(std::unique_ptr<pascal_s::VariableDeclarationNode>(var));
+        }
+        pending_local_var_decls.pop_back();
+    }
     func_decl->body.reset(static_cast<pascal_s::CompoundStatementNode*>(stmt_result));
     pending_func_decls.push_back(func_decl);
     g_symbol_table.exit_scope();
@@ -172,24 +185,30 @@ func_hdr: FUNCTION IDENTIFIER params COLON type_decl SEMICOLON {
     g_symbol_table.add_function($2, $5, func_params, false);
     g_symbol_table.enter_scope();
     func_params.clear();  // 清除参数列表，防止累积
+    pending_local_var_decls.push_back({});  // 新建局部变量列表
     free($2);
 }
 | FUNCTION IDENTIFIER SEMICOLON {
     last_func_name = $2;
     g_symbol_table.add_function($2, pascal_s::DataType::TY_INTEGER, {}, false);
-    g_symbol_table.enter_scope(); free($2);
+    g_symbol_table.enter_scope();
+    pending_local_var_decls.push_back({});  // 新建局部变量列表
+    free($2);
 }
 | PROCEDURE IDENTIFIER params SEMICOLON {
     last_func_name = $2;
     g_symbol_table.add_function($2, pascal_s::DataType::TY_VOID, func_params, true);
     g_symbol_table.enter_scope();
     func_params.clear();  // 清除参数列表，防止累积
+    pending_local_var_decls.push_back({});  // 新建局部变量列表
     free($2);
 }
 | PROCEDURE IDENTIFIER SEMICOLON {
     last_func_name = $2;
     g_symbol_table.add_function($2, pascal_s::DataType::TY_VOID, {}, true);
-    g_symbol_table.enter_scope(); free($2);
+    g_symbol_table.enter_scope();
+    pending_local_var_decls.push_back({});  // 新建局部变量列表
+    free($2);
 };
 
 params: LPAREN param_lst RPAREN { /* func_params already populated */ }
