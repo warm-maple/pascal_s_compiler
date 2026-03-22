@@ -515,11 +515,10 @@ inline void CodeGenerator::visit(WriteStatementNode& n) {
     
     // 支持多个值的 write 语句
     if (!n.values.empty()) {
-        // 多个值的情况
+        // 多个值的情况 - Pascal 的 write 不在值之间加空格
         output << "printf(\"";
         for (size_t i = 0; i < n.values.size(); i++) {
             DataType val_type = get_expr_type(n.values[i]);
-            if (i > 0) output << " ";  // 值之间加空格
             output << c_format_specifier(val_type);
         }
         output << "\", ";
