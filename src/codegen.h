@@ -87,7 +87,7 @@ inline std::string CodeGenerator::c_type(DataType t) {
 inline std::string CodeGenerator::c_format_specifier(DataType t) {
     switch (t) {
         case DataType::TY_INTEGER: return "%d";
-        case DataType::TY_REAL: return "%g";
+        case DataType::TY_REAL: return "%f";
         case DataType::TY_BOOLEAN: return "%d";
         case DataType::TY_CHAR: return "%c";
         default: return "%d";
