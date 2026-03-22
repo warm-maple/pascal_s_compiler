@@ -183,7 +183,10 @@ inline std::string CodeGenerator::generate(ProgramNode* program) {
         }
     }
     
-    // 主函数
+    // 主函数 - 清除当前函数的引用参数集合，但保留 func_params 用于查找函数签名
+    ref_params.clear();
+    current_func_name = "";
+    
     output << "int main() {\n";
     indent_level++;
     
@@ -323,6 +326,7 @@ inline void CodeGenerator::visit(FunctionCallNode& n) {
                 output << arg_ident->name;
                 continue;
             } else {
+                // 其他情况都需要传递地址
                 output << "&";
             }
         }
@@ -464,10 +468,30 @@ inline void CodeGenerator::visit(ProcedureCallNode& n) {
     } else {
         output << n.proc_name << "(";
         bool first = true;
-        for (const auto& arg : n.arguments) {
+        // 查找过程参数信息
+        auto it = func_params.find(n.proc_name);
+        for (size_t i = 0; i < n.arguments.size(); i++) {
             if (!first) output << ", ";
             first = false;
-            arg->accept(*this);
+            
+            bool is_ref = false;
+            if (it != func_params.end() && i < it->second.size()) {
+                is_ref = it->second[i].is_reference;
+            }
+            
+            // 如果是引用参数，需要传递地址
+            if (is_ref) {
+                auto* arg_ident = dynamic_cast<IdentifierNode*>(n.arguments[i].get());
+                if (arg_ident && is_ref_param(arg_ident->name)) {
+                    // 参数本身是引用参数，直接传递指针
+                    output << arg_ident->name;
+                    continue;
+                } else {
+                    // 其他情况都需要传递地址
+                    output << "&";
+                }
+            }
+            n.arguments[i]->accept(*this);
         }
         output << ");\n";
     }
