@@ -231,12 +231,13 @@ inline void CodeGenerator::visit(IdentifierNode& n) {
 }
 
 inline void CodeGenerator::visit(ArrayAccessNode& n) {
-    output << n.array_name << "[";
+    // 生成 C 风格的多维数组访问：array[i][j][k]
+    output << n.array_name;
     for (size_t i = 0; i < n.indices.size(); i++) {
-        if (i > 0) output << ", ";
+        output << "[";
         n.indices[i]->accept(*this);
+        output << "]";
     }
-    output << "]";
 }
 
 // 获取运算符优先级（越高优先级越高）
@@ -533,17 +534,28 @@ inline void CodeGenerator::visit(VariableDeclarationNode& n) {
         // 变量定义
         indent();
         if (n.type == DataType::TY_ARRAY || n.is_array) {
-            // 数组类型 - 需要获取数组信息
-            int size = 1;
-            if (n.array_info.upper_bound >= n.array_info.lower_bound) {
-                size = n.array_info.upper_bound - n.array_info.lower_bound + 1;
-            }
-            // 数组元素类型
+            // 数组类型 - 支持多维数组
             std::string elem_type = "int";  // 默认 integer
             if (n.array_info.element_type != DataType::TY_UNKNOWN) {
                 elem_type = c_type(n.array_info.element_type);
             }
-            output << elem_type << " " << n.var_name << "[" << size << "];\n";
+            
+            output << elem_type << " " << n.var_name;
+            
+            // 生成多维数组声明
+            if (!n.array_info.dimensions.empty()) {
+                // 多维数组：生成 [dim1][dim2][dim3]...
+                for (const auto& dim : n.array_info.dimensions) {
+                    output << "[" << dim.size() << "]";
+                }
+            } else if (n.array_info.upper_bound >= n.array_info.lower_bound) {
+                // 向后兼容：单维数组
+                int size = n.array_info.upper_bound - n.array_info.lower_bound + 1;
+                output << "[" << size << "]";
+            } else {
+                output << "[1]";  // 默认大小
+            }
+            output << ";\n";
         } else {
             output << c_type(n.type) << " " << n.var_name << ";\n";
         }
@@ -594,15 +606,25 @@ inline void CodeGenerator::visit(FunctionDeclarationNode& n) {
             
             indent();
             if (var->type == DataType::TY_ARRAY || var->is_array) {
-                int size = 1;
-                if (var->array_info.upper_bound >= var->array_info.lower_bound) {
-                    size = var->array_info.upper_bound - var->array_info.lower_bound + 1;
-                }
                 std::string elem_type = "int";
                 if (var->array_info.element_type != DataType::TY_UNKNOWN) {
                     elem_type = c_type(var->array_info.element_type);
                 }
-                output << elem_type << " " << var->var_name << "[" << size << "];\n";
+                
+                output << elem_type << " " << var->var_name;
+                
+                // 生成多维数组声明
+                if (!var->array_info.dimensions.empty()) {
+                    for (const auto& dim : var->array_info.dimensions) {
+                        output << "[" << dim.size() << "]";
+                    }
+                } else if (var->array_info.upper_bound >= var->array_info.lower_bound) {
+                    int size = var->array_info.upper_bound - var->array_info.lower_bound + 1;
+                    output << "[" << size << "]";
+                } else {
+                    output << "[1]";
+                }
+                output << ";\n";
             } else {
                 output << c_type(var->type) << " " << var->var_name << ";\n";
             }

@@ -25,11 +25,30 @@ enum class DataType {
     TY_UNKNOWN
 };
 
-// 数组类型信息
-struct ArrayInfo {
+// 单维度信息
+struct ArrayDimension {
     int lower_bound = 0;
     int upper_bound = 0;
+    int size() const { return upper_bound - lower_bound + 1; }
+};
+
+// 数组类型信息（支持多维）
+struct ArrayInfo {
+    std::vector<ArrayDimension> dimensions;  // 多维数组的每个维度
     DataType element_type = DataType::TY_INTEGER;
+    
+    // 向后兼容：单维度访问
+    int lower_bound = 0;
+    int upper_bound = 0;
+    
+    // 计算总大小（所有维度的乘积）
+    int total_size() const {
+        int size = 1;
+        for (const auto& dim : dimensions) {
+            size *= dim.size();
+        }
+        return size;
+    }
 };
 
 // 参数信息

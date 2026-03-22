@@ -24,6 +24,7 @@ static std::string last_func_name;
 static std::vector<pascal_s::FunctionDeclarationNode*> pending_func_decls;  // 待处理的函数声明
 static std::vector<pascal_s::VariableDeclarationNode*> pending_var_decls;   // 待处理的变量声明（全局）
 static std::vector<std::vector<pascal_s::VariableDeclarationNode*>> pending_local_var_decls;  // 局部变量栈
+static pascal_s::ArrayInfo last_array_info;  // 最后解析的数组类型信息
 
 static pascal_s::BinaryOp relop_to_binop(const char* op) {
     if (strcmp(op, "=") == 0) return pascal_s::BinaryOp::OP_EQ;
@@ -131,8 +132,10 @@ const_item: IDENTIFIER COLON type_decl RELOP expr SEMICOLON {
 var_list: var_list var_def | var_def;
 var_def: name_list COLON type_decl SEMICOLON {
     for (char* name : *$1) {
-        g_symbol_table.insert(name, $3);
+        g_symbol_table.insert(name, $3, false, false, last_array_info);
         auto var_decl = new pascal_s::VariableDeclarationNode(name, $3);
+        var_decl->is_array = ($3 == pascal_s::DataType::TY_ARRAY);
+        var_decl->array_info = last_array_info;
         // 如果在函数内部，添加到局部变量列表
         if (!pending_local_var_decls.empty()) {
             pending_local_var_decls.back().push_back(var_decl);
@@ -142,6 +145,8 @@ var_def: name_list COLON type_decl SEMICOLON {
         free(name);
     }
     delete $1;
+    // 重置数组信息
+    last_array_info = pascal_s::ArrayInfo{};
 };
 name_list: IDENTIFIER {
     $$ = new std::vector<char*>();
@@ -154,10 +159,32 @@ name_list: IDENTIFIER {
 
 type_decl: INTEGER { $$ = pascal_s::DataType::TY_INTEGER; } | REAL { $$ = pascal_s::DataType::TY_REAL; }
          | BOOLEAN { $$ = pascal_s::DataType::TY_BOOLEAN; } | CHAR { $$ = pascal_s::DataType::TY_CHAR; }
-         | ARRAY LBRACKET range_list RBRACKET OF type_decl { $$ = pascal_s::DataType::TY_ARRAY; };
+         | array_type_decl { $$ = pascal_s::DataType::TY_ARRAY; };
 
-range_list: INTEGER_LITERAL DOTDOT INTEGER_LITERAL
-          | range_list COMMA INTEGER_LITERAL DOTDOT INTEGER_LITERAL;
+array_type_decl: ARRAY LBRACKET range_list RBRACKET OF type_decl {
+    // last_array_info 已经在 range_list 中构建完成
+    last_array_info.element_type = $<tval>6;  // type_decl 是第 6 个符号
+    // 向后兼容：设置第一个维度的 bounds
+    if (!last_array_info.dimensions.empty()) {
+        last_array_info.lower_bound = last_array_info.dimensions[0].lower_bound;
+        last_array_info.upper_bound = last_array_info.dimensions[0].upper_bound;
+    }
+};
+
+range_list: INTEGER_LITERAL DOTDOT INTEGER_LITERAL {
+    last_array_info = pascal_s::ArrayInfo{};  // 重置
+    pascal_s::ArrayDimension dim;
+    dim.lower_bound = $1;
+    dim.upper_bound = $3;
+    last_array_info.dimensions.push_back(dim);
+}
+| range_list COMMA INTEGER_LITERAL DOTDOT INTEGER_LITERAL {
+    // last_array_info 已经包含之前的维度
+    pascal_s::ArrayDimension dim;
+    dim.lower_bound = $3;
+    dim.upper_bound = $5;
+    last_array_info.dimensions.push_back(dim);
+};
 subprog: func_hdr block SEMICOLON {
     // 函数体已存储在 stmt_result 中，函数声明在 func_hdr 中已创建并添加到符号表
     // 创建函数声明节点并暂存
