@@ -83,7 +83,16 @@ run_test() {
         return 1
     fi
     
-    if ! gcc -std=c99 -w "$cfile" -o "$exefile" 2>>"$efile"; then
+    # 对于大文件，增加括号嵌套深度限制
+    local gcc_flags="-std=c99 -w"
+    if [ -f "$cfile" ]; then
+        local csize=$(wc -c < "$cfile")
+        if [ "$csize" -gt 50000 ]; then
+            gcc_flags="$gcc_flags -fbracket-depth=512"
+        fi
+    fi
+    
+    if ! gcc $gcc_flags "$cfile" -o "$exefile" 2>>"$efile"; then
         echo -e "${YELLOW}[FAIL]${NC} $bn - C 编译失败"
         c_compile_failed=$((c_compile_failed + 1))
         echo "C_COMPILE_ERROR" > "$rfile"

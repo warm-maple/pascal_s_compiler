@@ -239,23 +239,62 @@ inline void CodeGenerator::visit(ArrayAccessNode& n) {
     output << "]";
 }
 
+// 获取运算符优先级（越高优先级越高）
+static int get_precedence(pascal_s::BinaryOp op) {
+    using namespace pascal_s;
+    switch (op) {
+        case BinaryOp::OP_MUL: case BinaryOp::OP_DIV: case BinaryOp::OP_MOD: case BinaryOp::OP_AND: return 3;
+        case BinaryOp::OP_ADD: case BinaryOp::OP_SUB: case BinaryOp::OP_OR: return 2;
+        case BinaryOp::OP_EQ: case BinaryOp::OP_NE: case BinaryOp::OP_LT: case BinaryOp::OP_LE: case BinaryOp::OP_GT: case BinaryOp::OP_GE: return 1;
+        default: return 0;
+    }
+}
+
+// 获取表达式的有效优先级
+static int get_expr_precedence(pascal_s::ExpressionNode* expr) {
+    using namespace pascal_s;
+    if (auto* bin = dynamic_cast<BinaryExpressionNode*>(expr)) {
+        return get_precedence(bin->op);
+    }
+    if (auto* un = dynamic_cast<UnaryExpressionNode*>(expr)) {
+        return 4;  // 一元运算符优先级最高
+    }
+    return 10;  // 字面量、标识符等优先级最高
+}
+
 inline void CodeGenerator::visit(BinaryExpressionNode& n) {
+    int my_prec = get_precedence(n.op);
+    
+    // 左子节点：只在优先级低于当前时加括号
+    bool need_left_paren = get_expr_precedence(n.left.get()) < my_prec;
+    if (need_left_paren) output << "(";
     n.left->accept(*this);
+    if (need_left_paren) output << ")";
+    
     output << " " << c_operator(n.op) << " ";
+    
+    // 右子节点：优先级低于或等于当前时加括号（因为右结合性）
+    bool need_right_paren = get_expr_precedence(n.right.get()) <= my_prec;
+    if (need_right_paren) output << "(";
     n.right->accept(*this);
+    if (need_right_paren) output << ")";
 }
 
 inline void CodeGenerator::visit(UnaryExpressionNode& n) {
-    if (n.op == UnaryOp::UOP_NOT) {
+    if (n.op == pascal_s::UnaryOp::UOP_NOT) {
         output << "!";
-    } else if (n.op == UnaryOp::UOP_NEGATE) {
+    } else if (n.op == pascal_s::UnaryOp::UOP_NEGATE) {
         output << "-";
     }
+    // 一元运算符的操作数通常不需要括号，除非是二元表达式
+    bool need_paren = dynamic_cast<pascal_s::BinaryExpressionNode*>(n.operand.get()) != nullptr;
+    if (need_paren) output << "(";
     if (n.operand) {
         n.operand->accept(*this);
     } else {
         output << "0";
     }
+    if (need_paren) output << ")";
 }
 
 inline void CodeGenerator::visit(FunctionCallNode& n) {
