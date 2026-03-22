@@ -240,11 +240,9 @@ inline void CodeGenerator::visit(ArrayAccessNode& n) {
 }
 
 inline void CodeGenerator::visit(BinaryExpressionNode& n) {
-    output << "(";
     n.left->accept(*this);
     output << " " << c_operator(n.op) << " ";
     n.right->accept(*this);
-    output << ")";
 }
 
 inline void CodeGenerator::visit(UnaryExpressionNode& n) {
@@ -253,13 +251,11 @@ inline void CodeGenerator::visit(UnaryExpressionNode& n) {
     } else if (n.op == UnaryOp::UOP_NEGATE) {
         output << "-";
     }
-    output << "(";
     if (n.operand) {
         n.operand->accept(*this);
     } else {
         output << "0";
     }
-    output << ")";
 }
 
 inline void CodeGenerator::visit(FunctionCallNode& n) {
