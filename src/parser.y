@@ -17,7 +17,7 @@ extern pascal_s::SymbolTable g_symbol_table;
 static std::vector<pascal_s::ParameterInfo> func_params;
 static std::vector<pascal_s::StatementNode*> stmt_list;
 static std::vector<std::vector<pascal_s::StatementNode*>> stmt_list_stack;  // stmt_list 栈
-static std::vector<pascal_s::ExpressionNode*> arg_list;
+static std::vector<std::vector<pascal_s::ExpressionNode*>> arg_list_stack;  // arg_list 栈
 static pascal_s::StatementNode* stmt_result;
 static pascal_s::StatementNode* then_branch_temp = nullptr;  // 用于 if-else 保存 then 分支
 static std::string last_func_name;
@@ -233,7 +233,7 @@ param_grp: VAR name_list COLON type_decl {
 compound_stmt: BEGIN_KW {
     stmt_list_stack.push_back(stmt_list);
     stmt_list.clear();
-} stmt_seq opt_semicolon END {
+} stmt_seq END {
     auto cs = new pascal_s::CompoundStatementNode();
     // 去重：避免重复添加相同的语句指针
     std::vector<pascal_s::StatementNode*> seen;
@@ -251,9 +251,7 @@ compound_stmt: BEGIN_KW {
     stmt_result = cs;
 };
 
-opt_semicolon: SEMICOLON | /* empty */;
-
-stmt_seq: stmt_seq stmt SEMICOLON | /* empty */;
+stmt_seq: stmt_seq stmt SEMICOLON | stmt SEMICOLON | stmt | /* empty */;
 
 stmt: IDENTIFIER ASSIGN expr {
     stmt_result = new pascal_s::AssignmentNode(
@@ -339,16 +337,15 @@ for_stmt: FOR IDENTIFIER ASSIGN expr TO expr DO stmt {
     free($2);
 };
 
-proc_call: IDENTIFIER LPAREN arg_lst RPAREN {
+proc_call: IDENTIFIER LPAREN { arg_list_stack.push_back({}); } arg_lst RPAREN {
     auto c = new pascal_s::ProcedureCallNode($1);
-    for (auto& a : arg_list) c->add_argument(std::unique_ptr<pascal_s::ExpressionNode>(a));
-    arg_list.clear();
+    for (auto& a : arg_list_stack.back()) c->add_argument(std::unique_ptr<pascal_s::ExpressionNode>(a));
+    arg_list_stack.pop_back();
     stmt_result = c;
     free($1);
 }
 | IDENTIFIER LPAREN RPAREN {
     auto c = new pascal_s::ProcedureCallNode($1);
-    arg_list.clear();
     stmt_result = c;
     free($1);
 }
@@ -358,20 +355,20 @@ proc_call: IDENTIFIER LPAREN arg_lst RPAREN {
     free($1);
 };
 
-write_stmt: WRITE LPAREN expr_lst RPAREN {
+write_stmt: WRITE LPAREN { arg_list_stack.push_back({}); } expr_lst RPAREN {
     auto* ws = new pascal_s::WriteStatementNode(nullptr);
-    for (auto* e : arg_list) {
+    for (auto* e : arg_list_stack.back()) {
         ws->values.push_back(std::unique_ptr<pascal_s::ExpressionNode>(e));
     }
-    arg_list.clear();
+    arg_list_stack.pop_back();
     stmt_result = ws;
 }
-| WRITELN LPAREN expr_lst RPAREN {
+| WRITELN LPAREN { arg_list_stack.push_back({}); } expr_lst RPAREN {
     auto* ws = new pascal_s::WriteStatementNode(nullptr);
-    for (auto* e : arg_list) {
+    for (auto* e : arg_list_stack.back()) {
         ws->values.push_back(std::unique_ptr<pascal_s::ExpressionNode>(e));
     }
-    arg_list.clear();
+    arg_list_stack.pop_back();
     stmt_result = ws;
 }
 | WRITE LPAREN RPAREN {
@@ -381,8 +378,8 @@ write_stmt: WRITE LPAREN expr_lst RPAREN {
     stmt_result = new pascal_s::WriteStatementNode(nullptr);
 };
 
-expr_lst: expr_lst COMMA expr { arg_list.push_back($3); }
-        | expr { arg_list.push_back($1); };
+expr_lst: expr_lst COMMA expr { arg_list_stack.back().push_back($3); }
+        | expr { arg_list_stack.back().push_back($1); };
 
 expr: simple_expr { $$ = $1; }
 | simple_expr RELOP simple_expr {
@@ -445,14 +442,14 @@ factor: INTEGER_LITERAL { $$ = new pascal_s::IntegerLiteralNode($1); }
 | CHAR_LITERAL { $$ = new pascal_s::CharLiteralNode($1); }
 | STRING_LITERAL { $$ = new pascal_s::StringLiteralNode($1); free($1); }
 | IDENTIFIER { $$ = new pascal_s::IdentifierNode($1); free($1); }
-| IDENTIFIER LPAREN arg_lst RPAREN {
+| IDENTIFIER LPAREN { arg_list_stack.push_back({}); } arg_lst RPAREN {
     auto c = new pascal_s::FunctionCallNode($1);
-    for (auto& a : arg_list) c->add_argument(std::unique_ptr<pascal_s::ExpressionNode>(a));
-    arg_list.clear(); $$ = c; free($1);
+    for (auto& a : arg_list_stack.back()) c->add_argument(std::unique_ptr<pascal_s::ExpressionNode>(a));
+    arg_list_stack.pop_back(); $$ = c; free($1);
 }
 | IDENTIFIER LPAREN RPAREN {
     auto c = new pascal_s::FunctionCallNode($1);
-    arg_list.clear(); $$ = c; free($1);
+    $$ = c; free($1);
 }
 | IDENTIFIER LBRACKET index_lst RBRACKET {
     auto* node = new pascal_s::ArrayAccessNode($1);
@@ -478,7 +475,7 @@ factor: INTEGER_LITERAL { $$ = new pascal_s::IntegerLiteralNode($1); }
     free($1);
 };
 
-arg_lst: arg_lst COMMA expr { arg_list.push_back($3); } | expr { arg_list.push_back($1); };
+arg_lst: arg_lst COMMA expr { arg_list_stack.back().push_back($3); } | expr { arg_list_stack.back().push_back($1); };
 
 index_lst: index_lst COMMA expr { $1->push_back($3); $$ = $1; }
          | expr { $$ = new std::vector<pascal_s::ExpressionNode*>(); $$->push_back($1); };
