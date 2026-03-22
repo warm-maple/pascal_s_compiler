@@ -389,7 +389,8 @@ inline void CodeGenerator::visit(FunctionCallNode& n) {
         
         auto it = func_params.find(n.func_name);
         
-        for (size_t i = 0; i < n.arguments.size(); i++) {
+        // 从右到左求值参数（匹配 Free Pascal 行为）
+        for (int i = n.arguments.size() - 1; i >= 0; i--) {
             indent();
             bool is_ref = (it != func_params.end() && i < it->second.size() && it->second[i].is_reference);
             DataType arg_type = get_expr_type(n.arguments[i].get());
@@ -605,7 +606,8 @@ inline void CodeGenerator::visit(ProcedureCallNode& n) {
         
         auto it = func_params.find(n.proc_name);
         
-        for (size_t i = 0; i < n.arguments.size(); i++) {
+        // 从右到左求值参数（匹配 Free Pascal 行为）
+        for (int i = n.arguments.size() - 1; i >= 0; i--) {
             indent();
             bool is_ref = (it != func_params.end() && i < it->second.size() && it->second[i].is_reference);
             DataType arg_type = get_expr_type(n.arguments[i].get());
