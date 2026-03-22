@@ -77,13 +77,13 @@ ALNUM    [a-zA-Z0-9_]
 
 {DIGIT}+ { yylval.ival = atoi(yytext); return INTEGER_LITERAL; }
 {DIGIT}+\.{DIGIT}+ { yylval.dval = atof(yytext); return REAL_LITERAL; }
+\'[^\']\' { yylval.cval = yytext[1]; return CHAR_LITERAL; }
 \'[^']*\' {
     std::string s(yytext);
     if (s.length() >= 2) s = s.substr(1, s.length() - 2);
     yylval.sval = strdup(s.c_str());
     return STRING_LITERAL;
 }
-\'.\' { yylval.cval = yytext[1]; return CHAR_LITERAL; }
 {LETTER}{ALNUM}* { yylval.sval = strdup(yytext); return IDENTIFIER; }
 . { }
 %%
