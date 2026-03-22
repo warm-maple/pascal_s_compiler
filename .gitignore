@@ -1,0 +1,17 @@
+# 编译产物
+*.o
+*.out
+*.exe
+pascal-s-compiler
+test_*
+output.c
+
+# 构建目录
+build/
+test_output/
+
+# 系统文件
+.DS_Store
+
+# 审查报告（可选）
+reviews/
