@@ -553,7 +553,8 @@ inline void CodeGenerator::visit(WhileStatementNode& n) {
 
 inline void CodeGenerator::visit(ForStatementNode& n) {
     indent();
-    output << "for (" << c_type(DataType::TY_INTEGER) << " " << n.loop_var << " = ";
+    // 不声明新变量，直接赋值（避免遮蔽全局变量）
+    output << "for (" << n.loop_var << " = ";
     n.start->accept(*this);
     output << "; " << n.loop_var << (n.is_downto ? " >= " : " <= ");
     n.end->accept(*this);
