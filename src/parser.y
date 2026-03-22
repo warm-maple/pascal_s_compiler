@@ -102,8 +102,22 @@ const_decl: CONST const_list;
 var_decl: VAR var_list;
 
 const_list: const_list const_item | const_item;
-const_item: IDENTIFIER COLON type_decl RELOP expr SEMICOLON { g_symbol_table.insert($1, $3, true); free($1); }
-          | IDENTIFIER RELOP expr SEMICOLON { g_symbol_table.insert($1, pascal_s::DataType::TY_INTEGER, true); free($1); };
+const_item: IDENTIFIER COLON type_decl RELOP expr SEMICOLON {
+    g_symbol_table.insert($1, $3, true);
+    auto var_decl = new pascal_s::VariableDeclarationNode($1, $3);
+    var_decl->is_const = true;
+    var_decl->init_value.reset($5);
+    pending_var_decls.push_back(var_decl);
+    free($1);
+}
+| IDENTIFIER RELOP expr SEMICOLON {
+    g_symbol_table.insert($1, pascal_s::DataType::TY_INTEGER, true);
+    auto var_decl = new pascal_s::VariableDeclarationNode($1, pascal_s::DataType::TY_INTEGER);
+    var_decl->is_const = true;
+    var_decl->init_value.reset($3);
+    pending_var_decls.push_back(var_decl);
+    free($1);
+};
 
 var_list: var_list var_def | var_def;
 var_def: name_list COLON type_decl SEMICOLON {
