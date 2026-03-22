@@ -286,6 +286,8 @@ inline void CodeGenerator::visit(UnaryExpressionNode& n) {
     } else if (n.op == pascal_s::UnaryOp::UOP_NEGATE) {
         output << "-";
     }
+    output << " ";  // 添加空格以避免 --- 被解析为递减运算符
+    
     // 一元运算符的操作数通常不需要括号，除非是二元表达式
     bool need_paren = dynamic_cast<pascal_s::BinaryExpressionNode*>(n.operand.get()) != nullptr;
     if (need_paren) output << "(";
