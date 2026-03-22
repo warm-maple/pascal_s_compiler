@@ -4,6 +4,11 @@
 #include <string>
 #include <sstream>
 #include <vector>
+#include <unordered_map>
+#include <unordered_set>
+
+// 声明全局符号表（在 parser.y 中定义）
+extern pascal_s::SymbolTable g_symbol_table;
 
 namespace pascal_s {
 
@@ -40,12 +45,15 @@ private:
     std::vector<std::string> forward_declarations;  // 函数前向声明
     int indent_level = 0;
     std::string current_func_name;  // 当前函数名（用于处理函数返回值）
+    std::unordered_map<std::string, DataType> var_types;  // 变量类型映射
+    std::unordered_map<std::string, std::vector<VariableDeclarationNode*>> func_local_vars;  // 函数局部变量
     
     void indent();
     std::string c_operator(BinaryOp op);
     std::string c_type(DataType t);
     std::string c_format_specifier(DataType t);
     void generate_forward_declarations();
+    DataType get_identifier_type(const std::string& name);
 };
 
 // 工具函数实现
@@ -103,6 +111,7 @@ inline std::string CodeGenerator::generate(ProgramNode* program) {
     output.clear();
     forward_declarations.clear();
     indent_level = 0;
+    var_types.clear();
     
     // C 头文件
     output << "#include <stdio.h>\n";
@@ -111,6 +120,7 @@ inline std::string CodeGenerator::generate(ProgramNode* program) {
     output << "#define false 0\n\n";
     
     // 收集函数前向声明
+    std::vector<FunctionDeclarationNode*> funcs;
     for (const auto& decl : program->declarations) {
         if (auto* func = dynamic_cast<FunctionDeclarationNode*>(decl.get())) {
             std::ostringstream ss;
@@ -127,28 +137,65 @@ inline std::string CodeGenerator::generate(ProgramNode* program) {
             }
             ss << ")";
             forward_declarations.push_back(ss.str());
+            funcs.push_back(func);
+        }
+    }
+    
+    // 使用符号表识别局部变量（scope_level > 0）
+    // 注意：符号表查找返回最内层的符号，所以如果局部变量和全局变量同名，会返回局部变量
+    std::unordered_map<std::string, bool> is_local;
+    for (const auto& decl : program->declarations) {
+        if (auto* var = dynamic_cast<VariableDeclarationNode*>(decl.get())) {
+            auto sym = g_symbol_table.lookup(var->var_name);
+            // 如果符号的作用域级别 > 0，则是局部变量
+            if (sym && sym->scope_level > 0) {
+                is_local[var->var_name] = true;
+            }
+        }
+    }
+    
+    // 将局部变量分配到对应的函数
+    // 简单方法：按顺序处理，局部变量属于最近的前一个函数
+    std::string current_func;
+    for (const auto& decl : program->declarations) {
+        if (auto* func = dynamic_cast<FunctionDeclarationNode*>(decl.get())) {
+            current_func = func->func_name;
+        } else if (auto* var = dynamic_cast<VariableDeclarationNode*>(decl.get())) {
+            if (is_local[var->var_name] && !current_func.empty()) {
+                func_local_vars[current_func].push_back(var);
+            }
         }
     }
     
     // 输出前向声明
     generate_forward_declarations();
     
-    // 先生成全局变量声明（在 main 外部）
-    for (const auto& decl : program->declarations) {
-        if (auto* var = dynamic_cast<VariableDeclarationNode*>(decl.get())) {
-            decl->accept(*this);
+    // 跟踪已声明的全局变量名
+    std::unordered_set<std::string> declared_globals;
+    
+    // 收集所有函数内的局部变量名
+    std::unordered_set<std::string> local_var_names;
+    for (const auto& [func_name, vars] : func_local_vars) {
+        for (auto* var : vars) {
+            local_var_names.insert(var->var_name);
         }
     }
-    if (!program->declarations.empty()) {
-        // 检查是否有变量声明
-        bool has_vars = false;
-        for (const auto& decl : program->declarations) {
-            if (dynamic_cast<VariableDeclarationNode*>(decl.get())) {
-                has_vars = true;
-                break;
+    
+    // 先生成全局变量声明（在 main 外部）- 跳过函数内的局部变量
+    for (const auto& decl : program->declarations) {
+        if (auto* var = dynamic_cast<VariableDeclarationNode*>(decl.get())) {
+            // 跳过函数内的局部变量
+            if (local_var_names.find(var->var_name) != local_var_names.end()) {
+                continue;
+            }
+            if (declared_globals.find(var->var_name) == declared_globals.end()) {
+                decl->accept(*this);
+                declared_globals.insert(var->var_name);
             }
         }
-        if (has_vars) output << "\n";
+    }
+    if (!declared_globals.empty()) {
+        output << "\n";
     }
     
     // 处理函数定义（在 main 外部）
@@ -387,17 +434,26 @@ inline void CodeGenerator::visit(ProcedureCallNode& n) {
 
 inline void CodeGenerator::visit(WriteStatementNode& n) {
     indent();
+    // 辅助函数：获取表达式类型
+    auto get_expr_type = [this](const std::unique_ptr<ExpressionNode>& expr) -> DataType {
+        if (dynamic_cast<RealLiteralNode*>(expr.get())) return DataType::TY_REAL;
+        if (dynamic_cast<CharLiteralNode*>(expr.get())) return DataType::TY_CHAR;
+        if (dynamic_cast<StringLiteralNode*>(expr.get())) return DataType::TY_CHAR;
+        if (auto* id = dynamic_cast<IdentifierNode*>(expr.get())) {
+            return get_identifier_type(id->name);
+        }
+        if (auto* arr = dynamic_cast<ArrayAccessNode*>(expr.get())) {
+            return get_identifier_type(arr->array_name);
+        }
+        return DataType::TY_INTEGER;
+    };
+    
     // 支持多个值的 write 语句
     if (!n.values.empty()) {
         // 多个值的情况
         output << "printf(\"";
         for (size_t i = 0; i < n.values.size(); i++) {
-            DataType val_type = DataType::TY_INTEGER;
-            if (dynamic_cast<RealLiteralNode*>(n.values[i].get())) {
-                val_type = DataType::TY_REAL;
-            } else if (dynamic_cast<StringLiteralNode*>(n.values[i].get())) {
-                val_type = DataType::TY_CHAR;  // 字符串用 %s
-            }
+            DataType val_type = get_expr_type(n.values[i]);
             if (i > 0) output << " ";  // 值之间加空格
             output << c_format_specifier(val_type);
         }
@@ -409,10 +465,7 @@ inline void CodeGenerator::visit(WriteStatementNode& n) {
         output << ");\n";
     } else if (n.value) {
         // 单个值的情况（向后兼容）
-        DataType val_type = DataType::TY_INTEGER;
-        if (dynamic_cast<RealLiteralNode*>(n.value.get())) {
-            val_type = DataType::TY_REAL;
-        }
+        DataType val_type = get_expr_type(n.value);
         output << "printf(\"" << c_format_specifier(val_type) << "\", ";
         n.value->accept(*this);
         output << ");\n";
@@ -423,6 +476,9 @@ inline void CodeGenerator::visit(WriteStatementNode& n) {
 }
 
 inline void CodeGenerator::visit(VariableDeclarationNode& n) {
+    // 记录变量类型
+    var_types[n.var_name] = n.type;
+    
     if (n.is_const) {
         // 常量定义
         indent();
@@ -476,8 +532,33 @@ inline void CodeGenerator::visit(FunctionDeclarationNode& n) {
     std::string prev_func_name = current_func_name;
     current_func_name = n.func_name;
     
-    // 函数体 - 直接生成语句，不再生成额外的花括号
     indent_level++;
+    
+    // 生成局部变量声明
+    auto it = func_local_vars.find(n.func_name);
+    if (it != func_local_vars.end()) {
+        for (auto* var : it->second) {
+            // 记录变量类型
+            var_types[var->var_name] = var->type;
+            
+            indent();
+            if (var->type == DataType::TY_ARRAY || var->is_array) {
+                int size = 1;
+                if (var->array_info.upper_bound >= var->array_info.lower_bound) {
+                    size = var->array_info.upper_bound - var->array_info.lower_bound + 1;
+                }
+                std::string elem_type = "int";
+                if (var->array_info.element_type != DataType::TY_UNKNOWN) {
+                    elem_type = c_type(var->array_info.element_type);
+                }
+                output << elem_type << " " << var->var_name << "[" << size << "];\n";
+            } else {
+                output << c_type(var->type) << " " << var->var_name << ";\n";
+            }
+        }
+    }
+    
+    // 函数体 - 直接生成语句
     if (n.body) {
         if (auto* compound = dynamic_cast<CompoundStatementNode*>(n.body.get())) {
             for (const auto& stmt : compound->statements) {
@@ -493,6 +574,14 @@ inline void CodeGenerator::visit(FunctionDeclarationNode& n) {
     current_func_name = prev_func_name;
     
     output << "}\n\n";
+}
+
+inline pascal_s::DataType CodeGenerator::get_identifier_type(const std::string& name) {
+    auto it = var_types.find(name);
+    if (it != var_types.end()) {
+        return it->second;
+    }
+    return DataType::TY_INTEGER;  // 默认类型
 }
 
 inline void CodeGenerator::visit(ProgramNode& n) {
