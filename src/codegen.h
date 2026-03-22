@@ -145,6 +145,9 @@ inline std::string CodeGenerator::generate(ProgramNode* program) {
         }
     }
     
+    // 清除之前的局部变量信息
+    func_local_vars.clear();
+    
     // 从函数声明中获取局部变量
     for (const auto& decl : program->declarations) {
         if (auto* func = dynamic_cast<FunctionDeclarationNode*>(decl.get())) {
@@ -160,21 +163,9 @@ inline std::string CodeGenerator::generate(ProgramNode* program) {
     // 跟踪已声明的全局变量名
     std::unordered_set<std::string> declared_globals;
     
-    // 收集所有函数内的局部变量名
-    std::unordered_set<std::string> local_var_names;
-    for (const auto& [func_name, vars] : func_local_vars) {
-        for (auto* var : vars) {
-            local_var_names.insert(var->var_name);
-        }
-    }
-    
-    // 先生成全局变量声明（在 main 外部）- 跳过函数内的局部变量
+    // 先生成全局变量声明（在 main 外部）- program->declarations 中的 VariableDeclarationNode 都是全局变量
     for (const auto& decl : program->declarations) {
         if (auto* var = dynamic_cast<VariableDeclarationNode*>(decl.get())) {
-            // 跳过函数内的局部变量
-            if (local_var_names.find(var->var_name) != local_var_names.end()) {
-                continue;
-            }
             if (declared_globals.find(var->var_name) == declared_globals.end()) {
                 decl->accept(*this);
                 declared_globals.insert(var->var_name);
