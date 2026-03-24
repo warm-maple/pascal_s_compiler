@@ -143,7 +143,7 @@ public:
 
 // 二元运算符
 enum class BinaryOp { 
-    OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_MOD, OP_AND, OP_OR,
+    OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_DIV_REAL, OP_MOD, OP_AND, OP_OR,
     OP_EQ, OP_NE, OP_LT, OP_LE, OP_GT, OP_GE 
 };
 
@@ -152,11 +152,13 @@ public:
     BinaryOp op;
     std::unique_ptr<ExpressionNode> left;
     std::unique_ptr<ExpressionNode> right;
+    bool is_real_div = false;  // Pascal '/' 实数除法标记
     
     BinaryExpressionNode(BinaryOp o = BinaryOp::OP_ADD,
                          std::unique_ptr<ExpressionNode> l = nullptr,
-                         std::unique_ptr<ExpressionNode> r = nullptr)
-        : op(o), left(std::move(l)), right(std::move(r)) {}
+                         std::unique_ptr<ExpressionNode> r = nullptr,
+                         bool real_div = false)
+        : op(o), left(std::move(l)), right(std::move(r)), is_real_div(real_div) {}
     
     std::string node_type() const override { return "BinaryExpression"; }
     void accept(ASTVisitor& visitor) override;

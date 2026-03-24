@@ -45,7 +45,8 @@ private:
     std::vector<std::string> forward_declarations;  // 函数前向声明
     int indent_level = 0;
     std::string current_func_name;  // 当前函数名（用于处理函数返回值）
-    std::unordered_map<std::string, DataType> var_types;  // 变量类型映射
+    std::unordered_map<std::string, DataType> var_types;
+    std::unordered_set<std::string> string_consts;  // 多字符字符串常量集合
     std::unordered_map<std::string, std::vector<VariableDeclarationNode*>> func_local_vars;  // 函数局部变量
     std::unordered_map<std::string, std::vector<ParameterInfo>> func_params;  // 函数参数信息
     std::unordered_set<std::string> ref_params;  // 当前函数中的引用参数（var 参数）
@@ -54,7 +55,7 @@ private:
     void indent();
     std::string c_operator(BinaryOp op);
     std::string c_type(DataType t);
-    std::string c_format_specifier(DataType t);
+    std::string c_format_specifier(DataType t, bool for_scanf = false);
     void generate_forward_declarations();
     DataType get_identifier_type(const std::string& name);
     bool is_ref_param(const std::string& name);  // 检查是否是引用参数
@@ -69,6 +70,7 @@ inline std::string CodeGenerator::c_operator(BinaryOp op) {
         case BinaryOp::OP_SUB: return "-";
         case BinaryOp::OP_MUL: return "*";
         case BinaryOp::OP_DIV: return "/";
+        case BinaryOp::OP_DIV_REAL: return "/";
         case BinaryOp::OP_MOD: return "%";
         case BinaryOp::OP_AND: return "&&";
         case BinaryOp::OP_OR: return "||";
@@ -83,13 +85,17 @@ inline std::string CodeGenerator::c_operator(BinaryOp op) {
 }
 
 inline std::string CodeGenerator::c_type(DataType t) {
+    // Change TY_REAL mapping from double to float
+    if (t == DataType::TY_REAL) {
+        return "float";
+    }
     return TypeSystem::to_c_type(t);
 }
 
-inline std::string CodeGenerator::c_format_specifier(DataType t) {
+inline std::string CodeGenerator::c_format_specifier(DataType t, bool for_scanf) {
     switch (t) {
         case DataType::TY_INTEGER: return "%d";
-        case DataType::TY_REAL: return "%f";
+        case DataType::TY_REAL: return for_scanf ? "%f" : "%f"; // For float, %f is used for both scanf and printf
         case DataType::TY_BOOLEAN: return "%d";
         case DataType::TY_CHAR: return "%c";
         default: return "%d";
@@ -122,6 +128,7 @@ inline std::string CodeGenerator::generate(ProgramNode* program) {
     // C 头文件
     output << "#include <stdio.h>\n";
     output << "#include <stdlib.h>\n";
+    output << "#include <math.h>\n";
     output << "#define true 1\n";
     output << "#define false 0\n\n";
     
@@ -129,8 +136,10 @@ inline std::string CodeGenerator::generate(ProgramNode* program) {
     std::vector<FunctionDeclarationNode*> funcs;
     for (const auto& decl : program->declarations) {
         if (auto* func = dynamic_cast<FunctionDeclarationNode*>(decl.get())) {
+            std::string fname = func->func_name;
+            if (fname == "main") fname = "_pascal_main";
             std::ostringstream ss;
-            ss << c_type(func->return_type) << " " << func->func_name << "(";
+            ss << c_type(func->return_type) << " " << fname << "(";
             bool first = true;
             for (const auto& param : func->parameters) {
                 if (!first) ss << ", ";
@@ -180,7 +189,7 @@ inline std::string CodeGenerator::generate(ProgramNode* program) {
     
     // 处理函数定义（在 main 外部）
     for (const auto& decl : program->declarations) {
-        if (auto* func = dynamic_cast<FunctionDeclarationNode*>(decl.get())) {
+        if (dynamic_cast<FunctionDeclarationNode*>(decl.get())) {
             decl->accept(*this);
         }
     }
@@ -216,9 +225,16 @@ inline void CodeGenerator::visit(IntegerLiteralNode& n) {
 }
 
 inline void CodeGenerator::visit(RealLiteralNode& n) {
-    // 设置高精度输出，避免浮点常量被截断
-    output.precision(15);
-    output << n.value;
+    // 确保浮点数始终包含小数点，避免被 C 编译器当作整数
+    std::ostringstream tmp;
+    tmp.precision(15);
+    tmp << n.value;
+    std::string s = tmp.str();
+    // 如果没有小数点和科学计数法标记，添加 .0
+    if (s.find('.') == std::string::npos && s.find('e') == std::string::npos && s.find('E') == std::string::npos) {
+        s += ".0";
+    }
+    output << s;
 }
 
 inline void CodeGenerator::visit(CharLiteralNode& n) {
@@ -238,7 +254,9 @@ inline void CodeGenerator::visit(IdentifierNode& n) {
     if (is_ref_param(n.name)) {
         output << "*";
     }
-    output << n.name;
+    // 如果是函数名为main，重命名避免冲突
+    std::string emit_name = (is_function && n.name == "main") ? "_pascal_main" : n.name;
+    output << emit_name;
     
     // 如果是函数，生成空括号
     if (is_function) {
@@ -260,7 +278,7 @@ inline void CodeGenerator::visit(ArrayAccessNode& n) {
 static int get_precedence(pascal_s::BinaryOp op) {
     using namespace pascal_s;
     switch (op) {
-        case BinaryOp::OP_MUL: case BinaryOp::OP_DIV: case BinaryOp::OP_MOD: case BinaryOp::OP_AND: return 3;
+        case BinaryOp::OP_MUL: case BinaryOp::OP_DIV: case BinaryOp::OP_DIV_REAL: case BinaryOp::OP_MOD: case BinaryOp::OP_AND: return 3;
         case BinaryOp::OP_ADD: case BinaryOp::OP_SUB: case BinaryOp::OP_OR: return 2;
         case BinaryOp::OP_EQ: case BinaryOp::OP_NE: case BinaryOp::OP_LT: case BinaryOp::OP_LE: case BinaryOp::OP_GT: case BinaryOp::OP_GE: return 1;
         default: return 0;
@@ -273,7 +291,7 @@ static int get_expr_precedence(pascal_s::ExpressionNode* expr) {
     if (auto* bin = dynamic_cast<BinaryExpressionNode*>(expr)) {
         return get_precedence(bin->op);
     }
-    if (auto* un = dynamic_cast<UnaryExpressionNode*>(expr)) {
+    if (dynamic_cast<UnaryExpressionNode*>(expr)) {
         return 4;  // 一元运算符优先级最高
     }
     return 10;  // 字面量、标识符等优先级最高
@@ -281,6 +299,24 @@ static int get_expr_precedence(pascal_s::ExpressionNode* expr) {
 
 inline void CodeGenerator::visit(BinaryExpressionNode& n) {
     int my_prec = get_precedence(n.op);
+    
+    // Pascal / (实数除法): 特殊处理，保证浮点除法
+    if (n.op == BinaryOp::OP_DIV_REAL) {
+        bool left_is_real = (get_expr_type(n.left.get()) == DataType::TY_REAL);
+        bool need_cast = !left_is_real && (get_expr_type(n.right.get()) != DataType::TY_REAL);
+        if (need_cast) output << "(double)(";
+        bool need_left_paren = !need_cast && (get_expr_precedence(n.left.get()) < my_prec);
+        if (need_left_paren) output << "(";
+        n.left->accept(*this);
+        if (need_left_paren) output << ")";
+        if (need_cast) output << ")";
+        output << " / ";
+        bool need_right_paren = get_expr_precedence(n.right.get()) <= my_prec;
+        if (need_right_paren) output << "(";
+        n.right->accept(*this);
+        if (need_right_paren) output << ")";
+        return;
+    }
     
     // 左子节点：只在优先级低于当前时加括号
     bool need_left_paren = get_expr_precedence(n.left.get()) < my_prec;
@@ -413,7 +449,7 @@ inline void CodeGenerator::visit(FunctionCallNode& n) {
         }
         
         indent();
-        output << n.func_name << "(";
+        output << (n.func_name == "main" ? "_pascal_main" : n.func_name) << "(";
         for (size_t i = 0; i < n.arguments.size(); i++) {
             if (i > 0) output << ", ";
             bool is_ref = (it != func_params.end() && i < it->second.size() && it->second[i].is_reference);
@@ -429,7 +465,7 @@ inline void CodeGenerator::visit(FunctionCallNode& n) {
         indent();
         output << "})";
     } else {
-        output << n.func_name << "(";
+        output << (n.func_name == "main" ? "_pascal_main" : n.func_name) << "(";
         bool first = true;
         auto it = func_params.find(n.func_name);
         for (size_t i = 0; i < n.arguments.size(); i++) {
@@ -462,7 +498,8 @@ inline void CodeGenerator::visit(AssignmentNode& n) {
     if (!current_func_name.empty()) {
         if (auto* target = dynamic_cast<IdentifierNode*>(n.target.get())) {
             if (target->name == current_func_name) {
-                output << "return ";
+                // Pascal: funcname := value 只是设置返回值，不是立即 return
+                output << "_retval = ";
                 n.value->accept(*this);
                 output << ";\n";
                 return;
@@ -580,12 +617,61 @@ inline void CodeGenerator::visit(ForStatementNode& n) {
 
 inline void CodeGenerator::visit(ProcedureCallNode& n) {
     indent();
-    if (n.proc_name == "read") {
-        output << "scanf(\"%d\", &";
-        if (!n.arguments.empty()) {
-            n.arguments[0]->accept(*this);
+    // 处理 break 语句
+    if (n.proc_name == "break") {
+        output << "break;\n";
+        return;
+    }
+    if (n.proc_name == "read" || n.proc_name == "readln") {
+        // Handle each argument for read/readln
+        for (size_t ai = 0; ai < n.arguments.size(); ai++) {
+            if (ai > 0) indent();
+            auto* arg = n.arguments[ai].get();
+            // Check if argument is a function name (identifier that is a function)
+            auto* arg_id = dynamic_cast<IdentifierNode*>(arg);
+            bool is_func_return = false;
+            if (arg_id) {
+                // If it's the current function name, it's returning a value
+                if (arg_id->name == current_func_name && !current_func_name.empty()) {
+                    is_func_return = true;
+                } else {
+                    auto se = g_symbol_table.lookup(arg_id->name);
+                    if (se && se->is_subprogram()) {
+                        is_func_return = true;
+                    }
+                }
+            }
+            DataType read_type = DataType::TY_INTEGER;
+            if (arg_id) {
+                read_type = get_identifier_type(arg_id->name);
+                // Also check symbol table
+                auto se = g_symbol_table.lookup(arg_id->name);
+                if (se) {
+                    if (se->is_subprogram()) read_type = se->return_type;
+                    else read_type = se->type;
+                }
+            } else if (dynamic_cast<ArrayAccessNode*>(arg)) {
+                // 数组元素: 获取元素类型（不是数组类型本身）
+                read_type = get_expr_type(arg);  // get_expr_type 正确处理 ArrayAccessNode
+            }
+            std::string fmt = c_format_specifier(read_type, true);
+            if (is_func_return) {
+                // Can't take address of function return; use temp var and return
+                output << "{ " << c_type(read_type) << " _rv; scanf(\"" << fmt << "\", &_rv); _retval = _rv; }\n";
+            } else if (arg_id && is_ref_param(arg_id->name)) {
+                // var parameter: already a pointer
+                output << "scanf(\"" << fmt << "\", " << arg_id->name << ");\n";
+            } else {
+                output << "scanf(\"" << fmt << "\", &";
+                // Don't let IdentifierNode append () for functions
+                if (arg_id) {
+                    output << arg_id->name;
+                } else {
+                    arg->accept(*this);
+                }
+                output << ");\n";
+            }
         }
-        output << ");\n";
         return;
     }
     
@@ -630,7 +716,7 @@ inline void CodeGenerator::visit(ProcedureCallNode& n) {
         }
         
         indent();
-        output << n.proc_name << "(";
+        output << (n.proc_name == "main" ? "_pascal_main" : n.proc_name) << "(";
         for (size_t i = 0; i < n.arguments.size(); i++) {
             if (i > 0) output << ", ";
             bool is_ref = (it != func_params.end() && i < it->second.size() && it->second[i].is_reference);
@@ -646,7 +732,7 @@ inline void CodeGenerator::visit(ProcedureCallNode& n) {
         indent();
         output << "});\n";
     } else {
-        output << n.proc_name << "(";
+        output << (n.proc_name == "main" ? "_pascal_main" : n.proc_name) << "(";
         bool first = true;
         auto it = func_params.find(n.proc_name);
         for (size_t i = 0; i < n.arguments.size(); i++) {
@@ -676,13 +762,26 @@ inline void CodeGenerator::visit(ProcedureCallNode& n) {
 inline void CodeGenerator::visit(WriteStatementNode& n) {
     indent();
     
+    // 辅助lambda：获取格式字符串
+    auto get_write_fmt = [this](ExpressionNode* expr) -> std::string {
+        // 字符串字面量使用 %s
+        if (dynamic_cast<StringLiteralNode*>(expr)) return "%s";
+        // 标识符：检查是否是字符串常量
+        if (auto* id = dynamic_cast<IdentifierNode*>(expr)) {
+            // 检查是否是多字符字符串常量
+            if (string_consts.count(id->name)) {
+                return "%s";
+            }
+        }
+        DataType t = get_expr_type(expr);
+        return c_format_specifier(t);
+    };
+    
     // 支持多个值的 write 语句
     if (!n.values.empty()) {
-        // 多个值的情况 - Pascal 的 write 不在值之间加空格
         output << "printf(\"";
         for (size_t i = 0; i < n.values.size(); i++) {
-            DataType val_type = get_expr_type(n.values[i].get());
-            output << c_format_specifier(val_type);
+            output << get_write_fmt(n.values[i].get());
         }
         output << "\", ";
         for (size_t i = 0; i < n.values.size(); i++) {
@@ -691,25 +790,33 @@ inline void CodeGenerator::visit(WriteStatementNode& n) {
         }
         output << ");\n";
     } else if (n.value) {
-        // 单个值的情况（向后兼容）
-        DataType val_type = get_expr_type(n.value.get());
-        output << "printf(\"" << c_format_specifier(val_type) << "\", ";
+        output << "printf(\"" << get_write_fmt(n.value.get()) << "\", ";
         n.value->accept(*this);
         output << ");\n";
     } else {
-        // 没有值的情况
         output << "printf(\"\\n\");\n";
     }
 }
 
 inline void CodeGenerator::visit(VariableDeclarationNode& n) {
-    // 记录变量类型
-    var_types[n.var_name] = n.type;
+    // 记录变量类型（数组存元素类型）
+    if ((n.type == DataType::TY_ARRAY || n.is_array) && n.array_info.element_type != DataType::TY_UNKNOWN) {
+        var_types[n.var_name] = n.array_info.element_type;
+    } else {
+        var_types[n.var_name] = n.type;
+    }
     
     if (n.is_const) {
         // 常量定义
         indent();
-        output << "const " << c_type(n.type) << " " << n.var_name << " = ";
+        // 检查是否是字符串常量
+        bool is_string = (n.init_value && dynamic_cast<StringLiteralNode*>(n.init_value.get()));
+        if (is_string) {
+            string_consts.insert(n.var_name);  // 记录字符串常量
+            output << "const char* " << n.var_name << " = ";
+        } else {
+            output << "const " << c_type(n.type) << " " << n.var_name << " = ";
+        }
         if (n.init_value) {
             n.init_value->accept(*this);
         } else {
@@ -752,8 +859,9 @@ inline void CodeGenerator::visit(FunctionDeclarationNode& n) {
     // 保存函数参数信息
     func_params[n.func_name] = n.parameters;
     
-    // 函数签名
-    output << c_type(n.return_type) << " " << n.func_name << "(";
+    // 函数签名 - 防止与C的main冲突
+    std::string emit_name = (n.func_name == "main") ? "_pascal_main" : n.func_name;
+    output << c_type(n.return_type) << " " << emit_name << "(";
     
     bool first = true;
     for (const auto& param : n.parameters) {
@@ -779,6 +887,8 @@ inline void CodeGenerator::visit(FunctionDeclarationNode& n) {
         if (param.is_reference) {
             ref_params.insert(param.name);
         }
+        // 注册参数类型，以便 get_identifier_type 和 write 格式化符正确
+        var_types[param.name] = param.type;
     }
     
     indent_level++;
@@ -787,8 +897,12 @@ inline void CodeGenerator::visit(FunctionDeclarationNode& n) {
     auto it = func_local_vars.find(n.func_name);
     if (it != func_local_vars.end()) {
         for (auto* var : it->second) {
-            // 记录变量类型
-            var_types[var->var_name] = var->type;
+            // 记录变量类型（数组存元素类型）
+            if ((var->type == DataType::TY_ARRAY || var->is_array) && var->array_info.element_type != DataType::TY_UNKNOWN) {
+                var_types[var->var_name] = var->array_info.element_type;
+            } else {
+                var_types[var->var_name] = var->type;
+            }
             
             indent();
             if (var->type == DataType::TY_ARRAY || var->is_array) {
@@ -817,6 +931,12 @@ inline void CodeGenerator::visit(FunctionDeclarationNode& n) {
         }
     }
     
+    // 声明返回值变量 _retval（非 void 函数）
+    if (n.return_type != DataType::TY_VOID) {
+        indent();
+        output << c_type(n.return_type) << " _retval = 0;\n";
+    }
+    
     // 函数体 - 直接生成语句
     if (n.body) {
         if (auto* compound = dynamic_cast<CompoundStatementNode*>(n.body.get())) {
@@ -826,6 +946,13 @@ inline void CodeGenerator::visit(FunctionDeclarationNode& n) {
         } else {
             n.body->accept(*this);
         }
+    }
+    // 添加 return _retval（非 void 函数）
+    if (n.return_type != DataType::TY_VOID) {
+        indent_level++;
+        indent();
+        output << "return _retval;\n";
+        indent_level--;
     }
     indent_level--;
     
@@ -840,6 +967,12 @@ inline pascal_s::DataType CodeGenerator::get_identifier_type(const std::string& 
     if (it != var_types.end()) {
         return it->second;
     }
+    // Fallback to symbol table
+    auto sym = g_symbol_table.lookup(name);
+    if (sym) {
+        if (sym->is_subprogram()) return sym->return_type;
+        return sym->type;
+    }
     return DataType::TY_INTEGER;  // 默认类型
 }
 
@@ -852,12 +985,21 @@ inline pascal_s::DataType CodeGenerator::get_expr_type(ExpressionNode* expr) {
         return get_identifier_type(id->name);
     }
     if (auto* arr = dynamic_cast<ArrayAccessNode*>(expr)) {
-        // 数组访问返回元素类型
+        // 数组访问返回元素类型 - 先检查 var_types（局部变量优先）
+        auto it = var_types.find(arr->array_name);
+        if (it != var_types.end() && it->second != DataType::TY_ARRAY && it->second != DataType::TY_UNKNOWN) {
+            return it->second;
+        }
+        // 再检查符号表
         auto sym = g_symbol_table.lookup(arr->array_name);
         if (sym && sym->array_info.element_type != DataType::TY_UNKNOWN) {
             return sym->array_info.element_type;
         }
-        return get_identifier_type(arr->array_name);
+        // 如果符号表中有type信息但element_type未知，尝试用type
+        if (sym && sym->type != DataType::TY_ARRAY && sym->type != DataType::TY_UNKNOWN) {
+            return sym->type;
+        }
+        return DataType::TY_INTEGER;
     }
     if (auto* un = dynamic_cast<UnaryExpressionNode*>(expr)) {
         return get_expr_type(un->operand.get());
@@ -882,7 +1024,7 @@ inline bool CodeGenerator::is_ref_param(const std::string& name) {
     return ref_params.find(name) != ref_params.end();
 }
 
-inline void CodeGenerator::visit(ProgramNode& n) {
+inline void CodeGenerator::visit(ProgramNode& /*n*/) {
     // ProgramNode 由 generate() 函数处理
 }
 

@@ -67,13 +67,17 @@ static pascal_s::BinaryOp relop_to_binop(const char* op) {
 
 %token LPAREN RPAREN LBRACKET RBRACKET SEMICOLON COMMA COLON DOT DOTDOT
 
+%nonassoc LOWER_THAN_ELSE
+%nonassoc ELSE
+
 %type <tval> type_decl
 %type <sval> ADDOP MULOP RELOP
 %type <expr> expr simple_expr term factor
 %type <name_list_t> name_list
 %type <index_list_t> index_lst
 
-%error-verbose
+%define parse.error verbose
+
 
 %%
 
@@ -120,6 +124,8 @@ const_item: IDENTIFIER COLON type_decl RELOP expr SEMICOLON {
         dtype = pascal_s::DataType::TY_CHAR;
     } else if (dynamic_cast<pascal_s::RealLiteralNode*>($3)) {
         dtype = pascal_s::DataType::TY_REAL;
+    } else if (dynamic_cast<pascal_s::StringLiteralNode*>($3)) {
+        dtype = pascal_s::DataType::TY_CHAR;  // 字符串常量使用 char 类型标记
     }
     g_symbol_table.insert($1, dtype, true);
     auto var_decl = new pascal_s::VariableDeclarationNode($1, dtype);
@@ -278,12 +284,13 @@ compound_stmt: BEGIN_KW {
     stmt_result = cs;
 };
 
-stmt_seq: stmt_seq stmt SEMICOLON | stmt SEMICOLON | stmt | /* empty */;
+stmt_seq: stmt_seq SEMICOLON stmt | stmt;
 
 stmt: IDENTIFIER ASSIGN expr {
     stmt_result = new pascal_s::AssignmentNode(
         new pascal_s::IdentifierNode($1), $3);
     stmt_list.push_back(stmt_result);
+    $<stmt>$ = stmt_result;
     free($1);
 }
 | IDENTIFIER LBRACKET index_lst RBRACKET ASSIGN expr {
@@ -294,73 +301,54 @@ stmt: IDENTIFIER ASSIGN expr {
     delete $3;
     stmt_result = new pascal_s::AssignmentNode(arr, $6);
     stmt_list.push_back(stmt_result);
+    $<stmt>$ = stmt_result;
     free($1);
 }
 | compound_stmt {
     stmt_list.push_back(stmt_result);
+    $<stmt>$ = stmt_result;
 }
-| if_stmt { stmt_list.push_back(stmt_result); }
-| while_stmt { stmt_list.push_back(stmt_result); }
-| for_stmt { stmt_list.push_back(stmt_result); }
-| proc_call { stmt_list.push_back(stmt_result); }
-| write_stmt { stmt_list.push_back(stmt_result); }
+| if_stmt { stmt_list.push_back(stmt_result); $<stmt>$ = stmt_result; }
+| while_stmt { stmt_list.push_back(stmt_result); $<stmt>$ = stmt_result; }
+| for_stmt { stmt_list.push_back(stmt_result); $<stmt>$ = stmt_result; }
+| proc_call { stmt_list.push_back(stmt_result); $<stmt>$ = stmt_result; }
+| write_stmt { stmt_list.push_back(stmt_result); $<stmt>$ = stmt_result; }
+| /* empty */ { stmt_result = nullptr; $<stmt>$ = nullptr; }
 ;
 
-if_stmt: IF expr THEN stmt {
-    // 使用 stmt_result 作为 then_branch（由 stmt 规则设置）
-    // 注意：stmt 规则已经将语句推入 stmt_list，我们需要弹出它
-    pascal_s::StatementNode* ts = stmt_result;
-    // 从 stmt_list 移除刚添加的语句（因为它将成为 if 的一部分）
-    if (!stmt_list.empty() && stmt_list.back() == ts) {
-        stmt_list.pop_back();
-    }
-    then_branch_temp = ts;
-} ELSE stmt {
-    // 有 else 分支
-    pascal_s::StatementNode* es = stmt_result;
-    // 从 stmt_list 移除刚添加的语句
-    if (!stmt_list.empty() && stmt_list.back() == es) {
-        stmt_list.pop_back();
-    }
-    auto* ifs = new pascal_s::IfStatementNode($2, then_branch_temp);
+if_stmt: IF expr THEN stmt ELSE stmt {
+    // 直接从 bison 栈读取 then-branch ($4) 和 else-branch ($6)
+    // 无需 mid-rule action，无需全局 then_branch_temp
+    auto* ts = $<stmt>4;
+    auto* es = $<stmt>6;
+    if (!stmt_list.empty() && stmt_list.back() == es) stmt_list.pop_back();
+    if (!stmt_list.empty() && stmt_list.back() == ts) stmt_list.pop_back();
+    auto* ifs = new pascal_s::IfStatementNode($2, ts);
     ifs->set_else_branch(std::unique_ptr<pascal_s::StatementNode>(es));
-    then_branch_temp = nullptr;
     stmt_result = ifs;
-    // 不推入 stmt_list，由 stmt 规则处理
 }
-| IF expr THEN stmt {
-    // 无 else 分支
-    pascal_s::StatementNode* ts = stmt_result;
-    // 从 stmt_list 移除刚添加的语句
-    if (!stmt_list.empty() && stmt_list.back() == ts) {
-        stmt_list.pop_back();
-    }
+| IF expr THEN stmt %prec LOWER_THAN_ELSE {
+    auto* ts = $<stmt>4;
+    if (!stmt_list.empty() && stmt_list.back() == ts) stmt_list.pop_back();
     stmt_result = new pascal_s::IfStatementNode($2, ts);
-    // 不推入 stmt_list，由 stmt 规则处理
 };
 
 while_stmt: WHILE expr DO stmt {
-    // stmt_result 已经是 body 语句，从 stmt_list 移除它
-    if (!stmt_list.empty() && stmt_list.back() == stmt_result) {
-        stmt_list.pop_back();
-    }
-    stmt_result = new pascal_s::WhileStatementNode($2, stmt_result);
+    auto* body = $<stmt>4;
+    if (!stmt_list.empty() && stmt_list.back() == body) stmt_list.pop_back();
+    stmt_result = new pascal_s::WhileStatementNode($2, body);
 };
 
 for_stmt: FOR IDENTIFIER ASSIGN expr TO expr DO stmt {
-    // stmt_result 已经是 body 语句，从 stmt_list 移除它
-    if (!stmt_list.empty() && stmt_list.back() == stmt_result) {
-        stmt_list.pop_back();
-    }
-    stmt_result = new pascal_s::ForStatementNode($2, $4, $6, stmt_result, false);
+    auto* body = $<stmt>8;
+    if (!stmt_list.empty() && stmt_list.back() == body) stmt_list.pop_back();
+    stmt_result = new pascal_s::ForStatementNode($2, $4, $6, body, false);
     free($2);
 }
 | FOR IDENTIFIER ASSIGN expr DOWNTO expr DO stmt {
-    // stmt_result 已经是 body 语句，从 stmt_list 移除它
-    if (!stmt_list.empty() && stmt_list.back() == stmt_result) {
-        stmt_list.pop_back();
-    }
-    stmt_result = new pascal_s::ForStatementNode($2, $4, $6, stmt_result, true);
+    auto* body = $<stmt>8;
+    if (!stmt_list.empty() && stmt_list.back() == body) stmt_list.pop_back();
+    stmt_result = new pascal_s::ForStatementNode($2, $4, $6, body, true);
     free($2);
 };
 
@@ -442,7 +430,7 @@ term: factor { $$ = $1; }
             std::unique_ptr<pascal_s::ExpressionNode>($1),
             std::unique_ptr<pascal_s::ExpressionNode>($3));
     } else {
-        $$ = new pascal_s::BinaryExpressionNode(pascal_s::BinaryOp::OP_DIV,
+        $$ = new pascal_s::BinaryExpressionNode(pascal_s::BinaryOp::OP_DIV_REAL,
             std::unique_ptr<pascal_s::ExpressionNode>($1),
             std::unique_ptr<pascal_s::ExpressionNode>($3));
     }

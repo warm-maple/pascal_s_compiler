@@ -1,6 +1,7 @@
 %{
 #include <cstring>
 #include <string>
+#include <algorithm>
 #include "ast.h"
 #include "parser.tab.hpp"
 // 解决 BEGIN 宏冲突
@@ -8,6 +9,13 @@
 #undef BEGIN
 #endif
 extern int yylineno;
+
+// 将字符串转换为小写（Pascal 标识符不区分大小写）
+static char* strdup_lower(const char* s) {
+    char* r = strdup(s);
+    for (char* p = r; *p; ++p) *p = tolower(*p);
+    return r;
+}
 %}
 
 %option noyywrap
@@ -75,6 +83,13 @@ ALNUM    [a-zA-Z0-9_]
 \.          { return DOT; }
 \.\.        { return DOTDOT; }
 
+[Tt][Rr][Uu][Ee]              { yylval.sval = strdup("true"); return IDENTIFIER; }
+[Ff][Aa][Ll][Ss][Ee]          { yylval.sval = strdup("false"); return IDENTIFIER; }
+[Rr][Ee][Aa][Dd]              { yylval.sval = strdup("read"); return IDENTIFIER; }
+[Rr][Ee][Aa][Dd][Ll][Nn]      { yylval.sval = strdup("readln"); return IDENTIFIER; }
+[Bb][Rr][Ee][Aa][Kk]          { yylval.sval = strdup("break"); return IDENTIFIER; }
+[Cc][Oo][Nn][Tt][Ii][Nn][Uu][Ee] { yylval.sval = strdup("continue"); return IDENTIFIER; }
+
 {DIGIT}+ { yylval.ival = atoi(yytext); return INTEGER_LITERAL; }
 {DIGIT}+\.{DIGIT}+ { yylval.dval = atof(yytext); return REAL_LITERAL; }
 \'[^\']\' { yylval.cval = yytext[1]; return CHAR_LITERAL; }
@@ -84,6 +99,6 @@ ALNUM    [a-zA-Z0-9_]
     yylval.sval = strdup(s.c_str());
     return STRING_LITERAL;
 }
-{LETTER}{ALNUM}* { yylval.sval = strdup(yytext); return IDENTIFIER; }
+{LETTER}{ALNUM}* { yylval.sval = strdup_lower(yytext); return IDENTIFIER; }
 . { }
 %%
