@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
-# Pascal-S 编译器 - 全量回归测试脚本（带答案对比）
+# Pascal-S 批量跑测试的脚本（顺便对个答案）
 # 用法：./scripts/run_all_tests.sh [编译器路径] [测试集目录] [答案文件]
 
-# 配置
+# 基本配置
 COMPILER="${1:-./pascal-s-compiler}"
 TEST_DIR="${2:-open_set}"
 ANSWER_FILE="${3:-$TEST_DIR/test_data.json}"
@@ -35,9 +35,9 @@ mkdir -p "$C_OUTPUT_DIR" "$EXECUTABLE_DIR" "$RESULT_DIR" "$ERROR_DIR" "$ANSWER_D
 # 清空
 rm -f "$RESULT_DIR"/*.txt "$ERROR_DIR"/*.txt "$ANSWER_DIR"/*.expected "$ANSWER_DIR"/*.input
 
-# 加载答案
+# 把 json 格式的答案拆开存成文件，方便后面 diff
 if [ -f "$ANSWER_FILE" ]; then
-    echo "加载答案文件：$ANSWER_FILE"
+    echo "正在加载答案: $ANSWER_FILE"
     if command -v python3 &> /dev/null; then
         python3 -c "
 import json, os
@@ -55,7 +55,7 @@ print('已加载', len(data), '个答案')
 fi
 
 echo -e "${BLUE}========================================${NC}"
-echo -e "${BLUE}  Pascal-S 编译器 - 全量回归测试${NC}"
+echo -e "${BLUE}  Pascal-S 测试运行脚本${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo "编译器：$COMPILER"
 echo "测试目录：$TEST_DIR"
@@ -77,13 +77,13 @@ run_test() {
     total=$((total + 1))
     
     if ! "$COMPILER" -o "$cfile" "$pf" >/dev/null 2>"$efile"; then
-        echo -e "${RED}[FAIL]${NC} $bn - Pascal 编译失败"
+        echo -e "${RED}[挂了]${NC} $bn - frontend 编译错误"
         compile_failed=$((compile_failed + 1))
         echo "PASCAL_COMPILE_ERROR" > "$rfile"
         return 1
     fi
     
-    # 对于大文件，增加括号嵌套深度限制
+    # 破编译遇到长表达式嵌套太多会爆掉，加个上限参数
     local gcc_flags="-std=c99 -w"
     if [ -f "$cfile" ]; then
         local csize=$(wc -c < "$cfile")
@@ -93,7 +93,7 @@ run_test() {
     fi
     
     if ! gcc $gcc_flags "$cfile" -o "$exefile" 2>>"$efile"; then
-        echo -e "${YELLOW}[FAIL]${NC} $bn - C 编译失败"
+        echo -e "${YELLOW}[挂了]${NC} $bn - gcc 编译失败，生成的.c有问题"
         c_compile_failed=$((c_compile_failed + 1))
         echo "C_COMPILE_ERROR" > "$rfile"
         return 1
@@ -102,21 +102,21 @@ run_test() {
     local out=""
     if [ -f "$ansinp" ] && [ -s "$ansinp" ]; then
         out=$(cat "$ansinp" | "$exefile" 2>>"$efile") || {
-            echo -e "${YELLOW}[FAIL]${NC} $bn - 运行时错误"
+            echo -e "${YELLOW}[挂了]${NC} $bn - 跑起来崩溃了"
             runtime_failed=$((runtime_failed + 1))
             echo "RUNTIME_ERROR" > "$rfile"
             return 1
         }
     elif [ -f "$inpfile" ]; then
         out=$("$exefile" < "$inpfile" 2>>"$efile") || {
-            echo -e "${YELLOW}[FAIL]${NC} $bn - 运行时错误"
+            echo -e "${YELLOW}[挂了]${NC} $bn - 跑起来崩溃了"
             runtime_failed=$((runtime_failed + 1))
             echo "RUNTIME_ERROR" > "$rfile"
             return 1
         }
     else
         out=$("$exefile" 2>>"$efile") || {
-            echo -e "${YELLOW}[FAIL]${NC} $bn - 运行时错误"
+            echo -e "${YELLOW}[挂了]${NC} $bn - 跑起来崩溃了"
             runtime_failed=$((runtime_failed + 1))
             echo "RUNTIME_ERROR" > "$rfile"
             return 1
@@ -128,19 +128,19 @@ run_test() {
         local ot=$(echo "$out" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
         local et=$(echo "$exp" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
         if [ "$ot" = "$et" ]; then
-            echo -e "${GREEN}[PASS]${NC} $bn"
+            echo -e "${GREEN}[过关]${NC} $bn"
             passed=$((passed + 1))
             echo "PASS" > "$rfile"
         else
-            echo -e "${RED}[FAIL]${NC} $bn - 输出不匹配"
-            echo "  预期：${et:0:60}..."
-            echo "  实际：${ot:0:60}..."
+            echo -e "${RED}[挂了]${NC} $bn - 跟答案不一样"
+            echo "  应该是：${et:0:60}..."
+            echo "  实际上是：${ot:0:60}..."
             output_mismatch=$((output_mismatch + 1))
             echo "OUTPUT_MISMATCH" > "$rfile"
         fi
     else
         echo "$out" > "$rfile"
-        echo -e "${GREEN}[PASS]${NC} $bn (无答案)"
+        echo -e "${GREEN}[过关?]${NC} $bn (没有答案可以参照)"
         passed=$((passed + 1))
     fi
     return 0
@@ -157,13 +157,13 @@ set -e
 
 echo ""
 echo -e "${BLUE}========================================${NC}"
-echo -e "${BLUE}  测试结果${NC}"
+echo -e "${BLUE}  测试汇总${NC}"
 echo -e "${BLUE}========================================${NC}"
-echo "总数：$total | 通过：$passed | 失败：$((total - passed))"
-echo "  Pascal 编译失败：$compile_failed"
-echo "  C 编译失败：$c_compile_failed"
-echo "  运行时错误：$runtime_failed"
-echo "  输出不匹配：$output_mismatch"
+echo "算了一遍：总共 $total 个，通过 $passed 个，挂了 $((total - passed)) 个"
+echo "  第一步 pas 编译失败：$compile_failed"
+echo "  第二步 gcc 编译失败：$c_compile_failed"
+echo "  第三步 运行崩溃：$runtime_failed"
+echo "  第四步 跟答案对不上：$output_mismatch"
 
 if [ $((total - passed)) -gt 0 ]; then
     echo ""
@@ -185,5 +185,5 @@ cat > "$RESULT_DIR/report.json" << EOF
 EOF
 
 echo ""
-echo "报告：$RESULT_DIR/report.json"
-[ $passed -eq $total ] && { echo -e "${GREEN}全部通过！${NC}"; exit 0; } || { echo -e "${RED}部分失败${NC}"; exit 1; }
+echo "详情放在了：$RESULT_DIR/report.json"
+[ $passed -eq $total ] && { echo -e "${GREEN}全部通过了！牛逼${NC}"; exit 0; } || { echo -e "${RED}还有挂的！加油吧${NC}"; exit 1; }
