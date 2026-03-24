@@ -144,10 +144,6 @@ public:
         if (left == DataType::TY_REAL || right == DataType::TY_REAL) {
             return DataType::TY_REAL;
         }
-        // Pascal / 实数除法始终返回 real
-        if (op == BinaryOp::OP_DIV_REAL) {
-            return DataType::TY_REAL;
-        }
         // div/mod 返回 integer
         if (op == BinaryOp::OP_DIV || op == BinaryOp::OP_MOD) {
             return DataType::TY_INTEGER;

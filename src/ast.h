@@ -143,7 +143,7 @@ public:
 
 // 二元运算符
 enum class BinaryOp { 
-    OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_DIV_REAL, OP_MOD, OP_AND, OP_OR,
+    OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_MOD, OP_AND, OP_OR,
     OP_EQ, OP_NE, OP_LT, OP_LE, OP_GT, OP_GE 
 };
 

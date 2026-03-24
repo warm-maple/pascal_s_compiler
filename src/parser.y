@@ -430,7 +430,7 @@ term: factor { $$ = $1; }
             std::unique_ptr<pascal_s::ExpressionNode>($1),
             std::unique_ptr<pascal_s::ExpressionNode>($3));
     } else {
-        $$ = new pascal_s::BinaryExpressionNode(pascal_s::BinaryOp::OP_DIV_REAL,
+        $$ = new pascal_s::BinaryExpressionNode(pascal_s::BinaryOp::OP_DIV,
             std::unique_ptr<pascal_s::ExpressionNode>($1),
             std::unique_ptr<pascal_s::ExpressionNode>($3));
     }

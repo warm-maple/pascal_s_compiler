@@ -46,7 +46,7 @@ private:
     int indent_level = 0;
     std::string current_func_name;  // 当前函数名（用于处理函数返回值）
     std::unordered_map<std::string, DataType> var_types;
-    std::unordered_set<std::string> string_consts;  // 多字符字符串常量集合
+    std::unordered_set<std::string> string_consts;  // 字符串常量
     std::unordered_map<std::string, std::vector<VariableDeclarationNode*>> func_local_vars;  // 函数局部变量
     std::unordered_map<std::string, std::vector<ParameterInfo>> func_params;  // 函数参数信息
     std::unordered_set<std::string> ref_params;  // 当前函数中的引用参数（var 参数）
@@ -70,7 +70,7 @@ inline std::string CodeGenerator::c_operator(BinaryOp op) {
         case BinaryOp::OP_SUB: return "-";
         case BinaryOp::OP_MUL: return "*";
         case BinaryOp::OP_DIV: return "/";
-        case BinaryOp::OP_DIV_REAL: return "/";
+
         case BinaryOp::OP_MOD: return "%";
         case BinaryOp::OP_AND: return "&&";
         case BinaryOp::OP_OR: return "||";
@@ -85,17 +85,13 @@ inline std::string CodeGenerator::c_operator(BinaryOp op) {
 }
 
 inline std::string CodeGenerator::c_type(DataType t) {
-    // Change TY_REAL mapping from double to float
-    if (t == DataType::TY_REAL) {
-        return "float";
-    }
     return TypeSystem::to_c_type(t);
 }
 
 inline std::string CodeGenerator::c_format_specifier(DataType t, bool for_scanf) {
     switch (t) {
         case DataType::TY_INTEGER: return "%d";
-        case DataType::TY_REAL: return for_scanf ? "%f" : "%f"; // For float, %f is used for both scanf and printf
+        case DataType::TY_REAL: return for_scanf ? "%lf" : "%f";
         case DataType::TY_BOOLEAN: return "%d";
         case DataType::TY_CHAR: return "%c";
         default: return "%d";
@@ -225,16 +221,8 @@ inline void CodeGenerator::visit(IntegerLiteralNode& n) {
 }
 
 inline void CodeGenerator::visit(RealLiteralNode& n) {
-    // 确保浮点数始终包含小数点，避免被 C 编译器当作整数
-    std::ostringstream tmp;
-    tmp.precision(15);
-    tmp << n.value;
-    std::string s = tmp.str();
-    // 如果没有小数点和科学计数法标记，添加 .0
-    if (s.find('.') == std::string::npos && s.find('e') == std::string::npos && s.find('E') == std::string::npos) {
-        s += ".0";
-    }
-    output << s;
+    output.precision(15);
+    output << n.value;
 }
 
 inline void CodeGenerator::visit(CharLiteralNode& n) {
@@ -278,7 +266,7 @@ inline void CodeGenerator::visit(ArrayAccessNode& n) {
 static int get_precedence(pascal_s::BinaryOp op) {
     using namespace pascal_s;
     switch (op) {
-        case BinaryOp::OP_MUL: case BinaryOp::OP_DIV: case BinaryOp::OP_DIV_REAL: case BinaryOp::OP_MOD: case BinaryOp::OP_AND: return 3;
+        case BinaryOp::OP_MUL: case BinaryOp::OP_DIV: case BinaryOp::OP_MOD: case BinaryOp::OP_AND: return 3;
         case BinaryOp::OP_ADD: case BinaryOp::OP_SUB: case BinaryOp::OP_OR: return 2;
         case BinaryOp::OP_EQ: case BinaryOp::OP_NE: case BinaryOp::OP_LT: case BinaryOp::OP_LE: case BinaryOp::OP_GT: case BinaryOp::OP_GE: return 1;
         default: return 0;
@@ -300,24 +288,7 @@ static int get_expr_precedence(pascal_s::ExpressionNode* expr) {
 inline void CodeGenerator::visit(BinaryExpressionNode& n) {
     int my_prec = get_precedence(n.op);
     
-    // Pascal / (实数除法): 特殊处理，保证浮点除法
-    if (n.op == BinaryOp::OP_DIV_REAL) {
-        bool left_is_real = (get_expr_type(n.left.get()) == DataType::TY_REAL);
-        bool need_cast = !left_is_real && (get_expr_type(n.right.get()) != DataType::TY_REAL);
-        if (need_cast) output << "(double)(";
-        bool need_left_paren = !need_cast && (get_expr_precedence(n.left.get()) < my_prec);
-        if (need_left_paren) output << "(";
-        n.left->accept(*this);
-        if (need_left_paren) output << ")";
-        if (need_cast) output << ")";
-        output << " / ";
-        bool need_right_paren = get_expr_precedence(n.right.get()) <= my_prec;
-        if (need_right_paren) output << "(";
-        n.right->accept(*this);
-        if (need_right_paren) output << ")";
-        return;
-    }
-    
+
     // 左子节点：只在优先级低于当前时加括号
     bool need_left_paren = get_expr_precedence(n.left.get()) < my_prec;
     if (need_left_paren) output << "(";
@@ -498,8 +469,7 @@ inline void CodeGenerator::visit(AssignmentNode& n) {
     if (!current_func_name.empty()) {
         if (auto* target = dynamic_cast<IdentifierNode*>(n.target.get())) {
             if (target->name == current_func_name) {
-                // Pascal: funcname := value 只是设置返回值，不是立即 return
-                output << "_retval = ";
+                output << "return ";
                 n.value->accept(*this);
                 output << ";\n";
                 return;
@@ -931,11 +901,7 @@ inline void CodeGenerator::visit(FunctionDeclarationNode& n) {
         }
     }
     
-    // 声明返回值变量 _retval（非 void 函数）
-    if (n.return_type != DataType::TY_VOID) {
-        indent();
-        output << c_type(n.return_type) << " _retval = 0;\n";
-    }
+
     
     // 函数体 - 直接生成语句
     if (n.body) {
@@ -947,13 +913,7 @@ inline void CodeGenerator::visit(FunctionDeclarationNode& n) {
             n.body->accept(*this);
         }
     }
-    // 添加 return _retval（非 void 函数）
-    if (n.return_type != DataType::TY_VOID) {
-        indent_level++;
-        indent();
-        output << "return _retval;\n";
-        indent_level--;
-    }
+
     indent_level--;
     
     // 恢复之前的函数名
