@@ -1,0 +1,14 @@
+program Factorial;
+{ 计算阶乘的程序 }
+var
+    n, i, fact: integer;
+begin
+    write('Enter a number: ');
+    read(n);
+    
+    fact := 1;
+    for i := 1 to n do
+        fact := fact * i;
+    
+    writeln('Factorial of ', n, ' = ', fact)
+end.

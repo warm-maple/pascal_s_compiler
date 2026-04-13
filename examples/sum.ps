@@ -1,0 +1,45 @@
+program SumExample;
+{ 演示各种控制流的综合示例 }
+var
+    i, n, sum: integer;
+    avg: real;
+    flag: boolean;
+    ch: char;
+    arr: array [1..10] of integer;
+begin
+    { 初始化 }
+    n := 5;
+    sum := 0;
+    flag := true;
+    
+    { while 循环 }
+    i := 1;
+    while i <= n do
+    begin
+        arr[i] := i * i;
+        sum := sum + arr[i];
+        i := i + 1
+    end;
+    
+    { 计算平均值 }
+    avg := sum / n;
+    
+    { if 语句 }
+    if sum > 50 then
+        writeln('Sum is greater than 50')
+    else
+        writeln('Sum is less than or equal to 50');
+    
+    { for 循环 }
+    for i := 1 to n do
+        writeln('arr[', i, '] = ', arr[i]);
+    
+    { repeat 循环 }
+    i := 0;
+    repeat
+        i := i + 1
+    until i >= n;
+    
+    writeln('Sum = ', sum);
+    writeln('Average = ', avg)
+end.
