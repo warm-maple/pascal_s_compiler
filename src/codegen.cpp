@@ -110,6 +110,109 @@ void CodeGenerator::generate_forward_declarations() {
     }
 }
 
+std::optional<SymbolTypeInfo> CodeGenerator::lookup_type_info(const std::string& name) const {
+    auto it = var_types.find(name);
+    if (it != var_types.end()) {
+        return it->second;
+    }
+
+    auto sym = g_symbol_table.lookup(name);
+    if (!sym) {
+        return std::nullopt;
+    }
+
+    SymbolTypeInfo info;
+    info.type = sym->type;
+    info.return_type = sym->return_type;
+    info.is_subprogram = sym->is_subprogram();
+    info.array_info = sym->array_info;
+    info.record_info = &sym->record_info;
+    return info;
+}
+
+const std::vector<ParameterInfo>* CodeGenerator::lookup_callable_params(const std::string& name) const {
+    auto it = func_params.find(name);
+    return it != func_params.end() ? &it->second : nullptr;
+}
+
+std::string CodeGenerator::emitted_callable_name(const std::string& name) const {
+    return name == "main" ? "_pascal_main" : name;
+}
+
+void CodeGenerator::remember_symbol_type(
+    const std::string& name,
+    DataType type,
+    const ArrayInfo& array_info,
+    const RecordInfo* record_info) {
+    SymbolTypeInfo info;
+    info.type = type;
+    info.array_info = array_info;
+    info.record_info = record_info;
+    var_types[name] = info;
+}
+
+void CodeGenerator::reset_temp_declarations() {
+    temp_declarations.clear();
+    temp_decl_names.clear();
+}
+
+void CodeGenerator::emit_temp_declarations() {
+    for (const auto& decl : temp_declarations) {
+        indent();
+        output << decl << ";\n";
+    }
+}
+
+std::string CodeGenerator::reserve_temp_name(const ResolvedType& type, bool is_pointer) {
+    std::string temp_name = "_tv" + std::to_string(temp_var_counter++);
+    if (!temp_decl_names.insert(temp_name).second) {
+        return temp_name;
+    }
+
+    std::ostringstream decl;
+    decl << c_decl_type(type.type, type.record_info);
+    if (is_pointer) {
+        decl << "*";
+    }
+    decl << " " << temp_name;
+    temp_declarations.push_back(decl.str());
+    return temp_name;
+}
+
+void CodeGenerator::emit_decl_for_variable(const VariableDeclarationNode& n) {
+    indent();
+    if (n.type == DataType::TY_ARRAY || n.is_array) {
+        std::string elem_type = "int";
+        if (n.array_info.element_type != DataType::TY_UNKNOWN) {
+            const RecordInfo* record_info =
+                n.array_info.element_type == DataType::TY_RECORD ? &n.record_info : nullptr;
+            elem_type = c_decl_type(n.array_info.element_type, record_info);
+        }
+
+        output << elem_type << " " << n.var_name;
+
+        if (!n.array_info.dimensions.empty()) {
+            for (const auto& dim : n.array_info.dimensions) {
+                output << "[" << dim.size() << "]";
+            }
+        } else if (n.array_info.upper_bound >= n.array_info.lower_bound) {
+            int size = n.array_info.upper_bound - n.array_info.lower_bound + 1;
+            output << "[" << size << "]";
+        } else {
+            output << "[1]";
+        }
+        output << ";\n";
+        return;
+    }
+
+    if (n.type == DataType::TY_RECORD) {
+        output << c_decl_type(n.type, &n.record_info) << " " << n.var_name << ";\n";
+        return;
+    }
+
+    output << c_type(n.type) << " " << n.var_name << ";\n";
+}
+
 std::string CodeGenerator::generate(ProgramNode* program) {
     output.str("");
     output.clear();
@@ -206,7 +309,12 @@ std::string CodeGenerator::generate(ProgramNode* program) {
     
     output << "int main() {\n";
     indent_level++;
-    
+
+    reset_temp_declarations();
+    std::ostringstream main_body;
+    auto* old_buf = output.rdbuf();
+    static_cast<std::ostream&>(output).rdbuf(main_body.rdbuf());
+
     if (program->main_body) {
         for (const auto& stmt : program->main_body->statements) {
             if (stmt) stmt->accept(*this);
@@ -215,7 +323,11 @@ std::string CodeGenerator::generate(ProgramNode* program) {
     
     indent();
     output << "return 0;\n";
-    
+
+    static_cast<std::ostream&>(output).rdbuf(old_buf);
+    emit_temp_declarations();
+    output << main_body.str();
+
     indent_level--;
     output << "}\n";
     
@@ -345,49 +457,11 @@ void CodeGenerator::visit(BinaryExpressionNode& n) {
     if (need_right_paren) output << ")";
 }
 
-static bool is_bool_expr(ExpressionNode* expr) {
-    if (!expr) return false;
-    if (dynamic_cast<BooleanLiteralNode*>(expr)) {
-        return true;
-    }
-    if (dynamic_cast<IntegerLiteralNode*>(expr)) {
-        return false;
-    }
-    if (auto* bin = dynamic_cast<BinaryExpressionNode*>(expr)) {
-        if (bin->op >= BinaryOp::OP_EQ && bin->op <= BinaryOp::OP_GE) return true;
-        if (bin->op == BinaryOp::OP_AND || bin->op == BinaryOp::OP_OR) return true;
-        return false;
-    }
-    if (auto* un = dynamic_cast<UnaryExpressionNode*>(expr)) {
-        return is_bool_expr(un->operand.get());
-    }
-    if (auto* id = dynamic_cast<IdentifierNode*>(expr)) {
-        auto sym = g_symbol_table.lookup(id->name);
-        if (sym) return sym->type == DataType::TY_BOOLEAN;
-        return false;
-    }
-    if (auto* arr = dynamic_cast<ArrayAccessNode*>(expr)) {
-        auto sym = g_symbol_table.lookup(arr->array_name);
-        if (sym) return sym->array_info.element_type == DataType::TY_BOOLEAN || sym->type == DataType::TY_BOOLEAN;
-        return false;
-    }
-    if (auto* rec = dynamic_cast<RecordAccessNode*>(expr)) {
-        if (auto* base = dynamic_cast<IdentifierNode*>(rec->record_expr.get())) {
-            auto sym = g_symbol_table.lookup(base->name);
-            if (sym) {
-                for (const auto& field : sym->record_info.fields) {
-                    if (field.name == rec->field_name) return field.type == DataType::TY_BOOLEAN;
-                }
-            }
-        }
-        return false;
-    }
-    return false;
-}
-
 void CodeGenerator::visit(UnaryExpressionNode& n) {
     if (n.op == UnaryOp::UOP_NOT) {
-        if (is_bool_expr(n.operand.get())) {
+        if (is_boolean_expr(
+                n.operand.get(),
+                [this](const std::string& name) { return lookup_type_info(name); })) {
             output << "!";
         } else {
             output << "~";
@@ -419,86 +493,116 @@ static bool has_side_effect(ExpressionNode* expr) {
     return false;
 }
 
-void CodeGenerator::visit(FunctionCallNode& n) {
-    bool has_side_effects = false;
-    for (const auto& arg : n.arguments) {
+bool CodeGenerator::call_has_side_effects(const std::vector<std::unique_ptr<ExpressionNode>>& arguments) const {
+    for (const auto& arg : arguments) {
         if (has_side_effect(arg.get())) {
-            has_side_effects = true;
-            break;
+            return true;
         }
     }
-    
-    if (has_side_effects) {
-        int base = temp_var_counter;
-        temp_var_counter += n.arguments.size();
-        
-        output << "({\n";
-        indent_level++;
-        
-        auto it = func_params.find(n.func_name);
-        
-        for (int i = static_cast<int>(n.arguments.size()) - 1; i >= 0; i--) {
-            indent();
-            bool is_ref = (it != func_params.end() && static_cast<size_t>(i) < it->second.size() && it->second[i].is_reference);
-            DataType arg_type = get_expr_type(n.arguments[i].get());
-            std::string c_type_str = c_type(arg_type);
-            
-            if (is_ref) {
-                auto* arg_ident = dynamic_cast<IdentifierNode*>(n.arguments[i].get());
-                if (arg_ident && is_ref_param(arg_ident->name)) {
-                    output << c_type_str << " _tv" << (base + i) << " = " << arg_ident->name << ";\n";
-                } else {
-                    output << c_type_str << "* _tv" << (base + i) << " = &";
-                    n.arguments[i]->accept(*this);
-                    output << ";\n";
-                }
+    return false;
+}
+
+void CodeGenerator::emit_call_argument_bindings(
+    const std::string& callable_name,
+    const std::vector<std::unique_ptr<ExpressionNode>>& arguments,
+    int base) {
+    const auto* params = lookup_callable_params(callable_name);
+
+    for (int i = static_cast<int>(arguments.size()) - 1; i >= 0; --i) {
+        indent();
+        bool is_ref =
+            params && static_cast<size_t>(i) < params->size() && (*params)[i].is_reference;
+        ResolvedType arg_type =
+            resolve_expr_type(arguments[i].get(), [this](const std::string& name) { return lookup_type_info(name); });
+        std::string temp_name = "_tv" + std::to_string(base + i);
+
+        if (is_ref) {
+            auto* arg_ident = dynamic_cast<IdentifierNode*>(arguments[i].get());
+            if (arg_ident && is_ref_param(arg_ident->name)) {
+                output << temp_name << " = " << arg_ident->name << ";\n";
             } else {
-                output << c_type_str << " _tv" << (base + i) << " = ";
-                n.arguments[i]->accept(*this);
+                output << temp_name << " = &";
+                arguments[i]->accept(*this);
                 output << ";\n";
             }
+        } else {
+            output << temp_name << " = ";
+            arguments[i]->accept(*this);
+            output << ";\n";
         }
-        
-        indent();
-        output << (n.func_name == "main" ? "_pascal_main" : n.func_name) << "(";
-        for (size_t i = 0; i < n.arguments.size(); i++) {
-            if (i > 0) output << ", ";
-            bool is_ref = (it != func_params.end() && i < it->second.size() && it->second[i].is_reference);
-            if (is_ref) {
-                output << "_tv" << (base + i);
-            } else {
-                output << "_tv" << (base + i);
+    }
+}
+
+void CodeGenerator::emit_call_argument_list(
+    const std::string& callable_name,
+    const std::vector<std::unique_ptr<ExpressionNode>>& arguments) {
+    const auto* params = lookup_callable_params(callable_name);
+
+    for (size_t i = 0; i < arguments.size(); ++i) {
+        if (i > 0) {
+            output << ", ";
+        }
+
+        bool is_ref = params && i < params->size() && (*params)[i].is_reference;
+        if (is_ref) {
+            auto* arg_ident = dynamic_cast<IdentifierNode*>(arguments[i].get());
+            if (arg_ident && is_ref_param(arg_ident->name)) {
+                output << arg_ident->name;
+                continue;
             }
+            output << "&";
         }
-        output << ");\n";
-        
-        indent_level--;
-        indent();
-        output << "})";
-    } else {
-        output << (n.func_name == "main" ? "_pascal_main" : n.func_name) << "(";
+
+        arguments[i]->accept(*this);
+    }
+}
+
+void CodeGenerator::visit(FunctionCallNode& n) {
+    if (call_has_side_effects(n.arguments)) {
+        output << "(";
+        std::vector<std::string> temp_names(n.arguments.size());
         bool first = true;
-        auto it = func_params.find(n.func_name);
-        for (size_t i = 0; i < n.arguments.size(); i++) {
-            if (!first) output << ", ";
-            first = false;
-            
+
+        for (int i = static_cast<int>(n.arguments.size()) - 1; i >= 0; --i) {
             bool is_ref = false;
-            if (it != func_params.end() && i < it->second.size()) {
-                is_ref = it->second[i].is_reference;
+            if (const auto* params = lookup_callable_params(n.func_name)) {
+                is_ref = static_cast<size_t>(i) < params->size() && (*params)[i].is_reference;
             }
-            
+
+            ResolvedType arg_type =
+                resolve_expr_type(n.arguments[i].get(), [this](const std::string& name) { return lookup_type_info(name); });
+            temp_names[i] = reserve_temp_name(arg_type, is_ref);
+
+            if (!first) {
+                output << ", ";
+            }
+            first = false;
+            output << temp_names[i] << " = ";
             if (is_ref) {
                 auto* arg_ident = dynamic_cast<IdentifierNode*>(n.arguments[i].get());
                 if (arg_ident && is_ref_param(arg_ident->name)) {
                     output << arg_ident->name;
-                    continue;
                 } else {
                     output << "&";
+                    n.arguments[i]->accept(*this);
                 }
+            } else {
+                n.arguments[i]->accept(*this);
             }
-            n.arguments[i]->accept(*this);
         }
+
+        if (!n.arguments.empty()) {
+            output << ", ";
+        }
+        output << emitted_callable_name(n.func_name) << "(";
+        for (size_t i = 0; i < temp_names.size(); ++i) {
+            if (i > 0) output << ", ";
+            output << temp_names[i];
+        }
+        output << "))";
+    } else {
+        output << emitted_callable_name(n.func_name) << "(";
+        emit_call_argument_list(n.func_name, n.arguments);
         output << ")";
     }
 }
@@ -620,8 +724,8 @@ void CodeGenerator::visit(ForStatementNode& n) {
 }
 
 void CodeGenerator::visit(ProcedureCallNode& n) {
-    indent();
     if (n.proc_name == "break") {
+        indent();
         output << "break;\n";
         return;
     }
@@ -670,85 +774,51 @@ void CodeGenerator::visit(ProcedureCallNode& n) {
         return;
     }
     
-    bool has_side_effects = false;
-    for (const auto& arg : n.arguments) {
-        if (has_side_effect(arg.get())) {
-            has_side_effects = true;
-            break;
-        }
-    }
-    
-    if (has_side_effects) {
-        int base = temp_var_counter;
-        temp_var_counter += n.arguments.size();
-        
-        output << "({\n";
-        indent_level++;
-        
-        auto it = func_params.find(n.proc_name);
-        
-        for (int i = static_cast<int>(n.arguments.size()) - 1; i >= 0; i--) {
-            indent();
-            bool is_ref = (it != func_params.end() && static_cast<size_t>(i) < it->second.size() && it->second[i].is_reference);
-            DataType arg_type = get_expr_type(n.arguments[i].get());
-            std::string c_type_str = c_type(arg_type);
-            
-            if (is_ref) {
-                auto* arg_ident = dynamic_cast<IdentifierNode*>(n.arguments[i].get());
-                if (arg_ident && is_ref_param(arg_ident->name)) {
-                    output << c_type_str << " _tv" << (base + i) << " = " << arg_ident->name << ";\n";
-                } else {
-                    output << c_type_str << "* _tv" << (base + i) << " = &";
-                    n.arguments[i]->accept(*this);
-                    output << ";\n";
-                }
-            } else {
-                output << c_type_str << " _tv" << (base + i) << " = ";
-                n.arguments[i]->accept(*this);
-                output << ";\n";
-            }
-        }
-        
-        indent();
-        output << (n.proc_name == "main" ? "_pascal_main" : n.proc_name) << "(";
-        for (size_t i = 0; i < n.arguments.size(); i++) {
-            if (i > 0) output << ", ";
-            bool is_ref = (it != func_params.end() && i < it->second.size() && it->second[i].is_reference);
-            if (is_ref) {
-                output << "_tv" << (base + i);
-            } else {
-                output << "_tv" << (base + i);
-            }
-        }
-        output << ");\n";
-        
-        indent_level--;
-        indent();
-        output << "});\n";
-    } else {
-        output << (n.proc_name == "main" ? "_pascal_main" : n.proc_name) << "(";
-        bool first = true;
-        auto it = func_params.find(n.proc_name);
-        for (size_t i = 0; i < n.arguments.size(); i++) {
-            if (!first) output << ", ";
-            first = false;
-            
+    if (call_has_side_effects(n.arguments)) {
+        std::vector<std::string> temp_names(n.arguments.size());
+        for (int i = static_cast<int>(n.arguments.size()) - 1; i >= 0; --i) {
             bool is_ref = false;
-            if (it != func_params.end() && i < it->second.size()) {
-                is_ref = it->second[i].is_reference;
+            if (const auto* params = lookup_callable_params(n.proc_name)) {
+                is_ref = static_cast<size_t>(i) < params->size() && (*params)[i].is_reference;
             }
-            
+
+            ResolvedType arg_type =
+                resolve_expr_type(n.arguments[i].get(), [this](const std::string& name) { return lookup_type_info(name); });
+            temp_names[i] = reserve_temp_name(arg_type, is_ref);
+        }
+
+        for (int i = static_cast<int>(n.arguments.size()) - 1; i >= 0; --i) {
+            indent();
+            bool is_ref = false;
+            if (const auto* params = lookup_callable_params(n.proc_name)) {
+                is_ref = static_cast<size_t>(i) < params->size() && (*params)[i].is_reference;
+            }
+
+            output << temp_names[i] << " = ";
             if (is_ref) {
                 auto* arg_ident = dynamic_cast<IdentifierNode*>(n.arguments[i].get());
                 if (arg_ident && is_ref_param(arg_ident->name)) {
                     output << arg_ident->name;
-                    continue;
                 } else {
                     output << "&";
+                    n.arguments[i]->accept(*this);
                 }
+            } else {
+                n.arguments[i]->accept(*this);
             }
-            n.arguments[i]->accept(*this);
+            output << ";\n";
         }
+        indent();
+        output << emitted_callable_name(n.proc_name) << "(";
+        for (size_t i = 0; i < temp_names.size(); ++i) {
+            if (i > 0) output << ", ";
+            output << temp_names[i];
+        }
+        output << ");\n";
+    } else {
+        indent();
+        output << emitted_callable_name(n.proc_name) << "(";
+        emit_call_argument_list(n.proc_name, n.arguments);
         output << ");\n";
     }
 }
@@ -789,11 +859,7 @@ void CodeGenerator::visit(WriteStatementNode& n) {
 }
 
 void CodeGenerator::visit(VariableDeclarationNode& n) {
-    if ((n.type == DataType::TY_ARRAY || n.is_array) && n.array_info.element_type != DataType::TY_UNKNOWN) {
-        var_types[n.var_name] = n.array_info.element_type;
-    } else {
-        var_types[n.var_name] = n.type;
-    }
+    remember_symbol_type(n.var_name, n.type, n.array_info, &n.record_info);
     
     if (n.is_const) {
         indent();
@@ -811,33 +877,7 @@ void CodeGenerator::visit(VariableDeclarationNode& n) {
         }
         output << ";\n";
     } else {
-        indent();
-        if (n.type == DataType::TY_ARRAY || n.is_array) {
-            std::string elem_type = "int";
-            if (n.array_info.element_type != DataType::TY_UNKNOWN) {
-                const RecordInfo* record_info =
-                    n.array_info.element_type == DataType::TY_RECORD ? &n.record_info : nullptr;
-                elem_type = c_decl_type(n.array_info.element_type, record_info);
-            }
-            
-            output << elem_type << " " << n.var_name;
-            
-            if (!n.array_info.dimensions.empty()) {
-                for (const auto& dim : n.array_info.dimensions) {
-                    output << "[" << dim.size() << "]";
-                }
-            } else if (n.array_info.upper_bound >= n.array_info.lower_bound) {
-                int size = n.array_info.upper_bound - n.array_info.lower_bound + 1;
-                output << "[" << size << "]";
-            } else {
-                output << "[1]";
-            }
-            output << ";\n";
-        } else if (n.type == DataType::TY_RECORD) {
-            output << c_decl_type(n.type, &n.record_info) << " " << n.var_name << ";\n";
-        } else {
-            output << c_type(n.type) << " " << n.var_name << ";\n";
-        }
+        emit_decl_for_variable(n);
     }
 }
 
@@ -869,47 +909,20 @@ void CodeGenerator::visit(FunctionDeclarationNode& n) {
         if (param.is_reference) {
             ref_params.insert(param.name);
         }
-        var_types[param.name] = param.type;
+        remember_symbol_type(param.name, param.type, param.array_info, &param.record_info);
     }
     
     indent_level++;
-    
+    reset_temp_declarations();
+    std::ostringstream body_stream;
+    auto* old_buf = output.rdbuf();
+    static_cast<std::ostream&>(output).rdbuf(body_stream.rdbuf());
+
     auto it = func_local_vars.find(n.func_name);
     if (it != func_local_vars.end()) {
         for (auto* var : it->second) {
-            if ((var->type == DataType::TY_ARRAY || var->is_array) && var->array_info.element_type != DataType::TY_UNKNOWN) {
-                var_types[var->var_name] = var->array_info.element_type;
-            } else {
-                var_types[var->var_name] = var->type;
-            }
-            
-            indent();
-            if (var->type == DataType::TY_ARRAY || var->is_array) {
-                std::string elem_type = "int";
-                if (var->array_info.element_type != DataType::TY_UNKNOWN) {
-                    const RecordInfo* record_info =
-                        var->array_info.element_type == DataType::TY_RECORD ? &var->record_info : nullptr;
-                    elem_type = c_decl_type(var->array_info.element_type, record_info);
-                }
-                
-                output << elem_type << " " << var->var_name;
-                
-                if (!var->array_info.dimensions.empty()) {
-                    for (const auto& dim : var->array_info.dimensions) {
-                        output << "[" << dim.size() << "]";
-                    }
-                } else if (var->array_info.upper_bound >= var->array_info.lower_bound) {
-                    int size = var->array_info.upper_bound - var->array_info.lower_bound + 1;
-                    output << "[" << size << "]";
-                } else {
-                    output << "[1]";
-                }
-                output << ";\n";
-            } else if (var->type == DataType::TY_RECORD) {
-                output << c_decl_type(var->type, &var->record_info) << " " << var->var_name << ";\n";
-            } else {
-                output << c_type(var->type) << " " << var->var_name << ";\n";
-            }
+            remember_symbol_type(var->var_name, var->type, var->array_info, &var->record_info);
+            emit_decl_for_variable(*var);
         }
     }
     
@@ -933,107 +946,27 @@ void CodeGenerator::visit(FunctionDeclarationNode& n) {
         output << "return _retval;\n";
         indent_level--;
     }
+
+    static_cast<std::ostream&>(output).rdbuf(old_buf);
+    emit_temp_declarations();
+    output << body_stream.str();
+
     indent_level--;
-    
     current_func_name = prev_func_name;
     
     output << "}\n\n";
 }
 
 DataType CodeGenerator::get_identifier_type(const std::string& name) {
-    auto it = var_types.find(name);
-    if (it != var_types.end()) {
-        return it->second;
-    }
-    auto sym = g_symbol_table.lookup(name);
-    if (sym) {
-        if (sym->is_subprogram()) return sym->return_type;
-        return sym->type;
-    }
-    return DataType::TY_INTEGER;
+    auto type_info = lookup_type_info(name);
+    return type_info ? type_info->effective_type() : DataType::TY_INTEGER;
 }
 
 DataType CodeGenerator::get_expr_type(ExpressionNode* expr) {
-    if (!expr) return DataType::TY_INTEGER;
-    if (dynamic_cast<RealLiteralNode*>(expr)) return DataType::TY_REAL;
-    if (dynamic_cast<BooleanLiteralNode*>(expr)) return DataType::TY_BOOLEAN;
-    if (dynamic_cast<CharLiteralNode*>(expr)) return DataType::TY_CHAR;
-    if (dynamic_cast<StringLiteralNode*>(expr)) return DataType::TY_CHAR;
-    if (auto* id = dynamic_cast<IdentifierNode*>(expr)) {
-        return get_identifier_type(id->name);
-    }
-    if (auto* arr = dynamic_cast<ArrayAccessNode*>(expr)) {
-        auto it = var_types.find(arr->array_name);
-        if (it != var_types.end() && it->second != DataType::TY_ARRAY && it->second != DataType::TY_UNKNOWN) {
-            return it->second;
-        }
-        auto sym = g_symbol_table.lookup(arr->array_name);
-        if (sym && sym->array_info.element_type != DataType::TY_UNKNOWN) {
-            return sym->array_info.element_type;
-        }
-        if (sym && sym->type != DataType::TY_ARRAY && sym->type != DataType::TY_UNKNOWN) {
-            return sym->type;
-        }
-        return DataType::TY_INTEGER;
-    }
-    if (auto* record = dynamic_cast<RecordAccessNode*>(expr)) {
-        if (auto* base_ident = dynamic_cast<IdentifierNode*>(record->record_expr.get())) {
-            auto sym = g_symbol_table.lookup(base_ident->name);
-            if (sym) {
-                for (const auto& field : sym->record_info.fields) {
-                    if (field.name == record->field_name) {
-                        return field.type;
-                    }
-                }
-            }
-        } else if (auto* base_record = dynamic_cast<RecordAccessNode*>(record->record_expr.get())) {
-            DataType base_type = get_expr_type(base_record);
-            if (base_type == DataType::TY_RECORD) {
-                if (auto* base_ident2 = dynamic_cast<IdentifierNode*>(base_record->record_expr.get())) {
-                    auto sym = g_symbol_table.lookup(base_ident2->name);
-                    if (sym) {
-                        const RecordInfo* info = &sym->record_info;
-                        for (const auto& segment : info->fields) {
-                            if (segment.name == base_record->field_name && segment.record_info) {
-                                info = segment.record_info.get();
-                                break;
-                            }
-                        }
-                        for (const auto& field : info->fields) {
-                            if (field.name == record->field_name) {
-                                return field.type;
-                            }
-                        }
-                    }
-                }
-            }
-        } else if (auto* base_arr = dynamic_cast<ArrayAccessNode*>(record->record_expr.get())) {
-            auto sym = g_symbol_table.lookup(base_arr->array_name);
-            if (sym) {
-                for (const auto& field : sym->record_info.fields) {
-                    if (field.name == record->field_name) {
-                        return field.type;
-                    }
-                }
-            }
-        }
-        return DataType::TY_UNKNOWN;
-    }
-    if (auto* un = dynamic_cast<UnaryExpressionNode*>(expr)) {
-        return get_expr_type(un->operand.get());
-    }
-    if (auto* bin = dynamic_cast<BinaryExpressionNode*>(expr)) {
-        if (get_expr_type(bin->left.get()) == DataType::TY_REAL || get_expr_type(bin->right.get()) == DataType::TY_REAL) {
-            return DataType::TY_REAL;
-        }
-        return get_expr_type(bin->left.get());
-    }
-    if (auto* fc = dynamic_cast<FunctionCallNode*>(expr)) {
-        auto sym = g_symbol_table.lookup(fc->func_name);
-        if (sym) return sym->return_type;
-        return DataType::TY_INTEGER;
-    }
-    return DataType::TY_INTEGER;
+    return resolve_expr_type(
+               expr,
+               [this](const std::string& name) { return lookup_type_info(name); })
+        .type;
 }
 
 bool CodeGenerator::is_ref_param(const std::string& name) {

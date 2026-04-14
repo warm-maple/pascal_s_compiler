@@ -1,4 +1,4 @@
 Semantic Error
 Type mismatch in assignment
 flag := 1.5;
-^~~~~
+^

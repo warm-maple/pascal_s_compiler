@@ -5,45 +5,29 @@ namespace pascal_s {
 
 namespace {
 
-const RecordField* find_record_field(const RecordInfo& record_info, const std::string& field_name) {
-    for (const auto& field : record_info.fields) {
-        if (field.name == field_name) {
-            return &field;
-        }
+int node_span(const ASTNode& node) {
+    if (auto* ident = dynamic_cast<const IdentifierNode*>(&node)) {
+        return static_cast<int>(ident->name.size());
     }
-    return nullptr;
-}
-
-const RecordInfo* resolve_record_info(const SymbolTable& sym_table, ExpressionNode* expr) {
-    if (!expr) {
-        return nullptr;
+    if (auto* arr = dynamic_cast<const ArrayAccessNode*>(&node)) {
+        return static_cast<int>(arr->array_name.size());
     }
-
-    if (auto* ident = dynamic_cast<IdentifierNode*>(expr)) {
-        auto symbol = sym_table.lookup(ident->name);
-        return symbol ? &symbol->record_info : nullptr;
+    if (auto* call = dynamic_cast<const FunctionCallNode*>(&node)) {
+        return static_cast<int>(call->func_name.size());
     }
-
-    if (auto* access = dynamic_cast<ArrayAccessNode*>(expr)) {
-        auto symbol = sym_table.lookup(access->array_name);
-        if (symbol && symbol->array_info.element_type == DataType::TY_RECORD) {
-            return &symbol->record_info;
-        }
-        return nullptr;
+    if (auto* proc = dynamic_cast<const ProcedureCallNode*>(&node)) {
+        return static_cast<int>(proc->proc_name.size());
     }
-
-    if (auto* record_access = dynamic_cast<RecordAccessNode*>(expr)) {
-        const RecordInfo* base_info = resolve_record_info(sym_table, record_access->record_expr.get());
-        if (!base_info) {
-            return nullptr;
-        }
-        const RecordField* field = find_record_field(*base_info, record_access->field_name);
-        if (field && field->type == DataType::TY_RECORD && field->record_info) {
-            return field->record_info.get();
-        }
+    if (auto* rec = dynamic_cast<const RecordAccessNode*>(&node)) {
+        return static_cast<int>(rec->field_name.size());
     }
-
-    return nullptr;
+    if (auto* var = dynamic_cast<const VariableDeclarationNode*>(&node)) {
+        return static_cast<int>(var->var_name.size());
+    }
+    if (auto* func = dynamic_cast<const FunctionDeclarationNode*>(&node)) {
+        return static_cast<int>(func->func_name.size());
+    }
+    return 1;
 }
 
 } // namespace
@@ -53,7 +37,7 @@ SemanticAnalyzer::SemanticAnalyzer() {
 }
 
 void SemanticAnalyzer::report_semantic_error(const ASTNode& node, const std::string& message) {
-    ErrorHandler::instance().semantic_error(message, node.line, node.column);
+    ErrorHandler::instance().semantic_error(message, node.line, node.column, node_span(node));
 }
 
 std::shared_ptr<SymbolEntry> SemanticAnalyzer::lookup_symbol(const std::string& name) {
@@ -67,6 +51,21 @@ std::shared_ptr<const SymbolEntry> SemanticAnalyzer::lookup_symbol(const std::st
 bool SemanticAnalyzer::is_builtin_procedure(const std::string& name) const {
     return name == "read" || name == "readln" || name == "write" || name == "writeln" ||
            name == "break" || name == "continue";
+}
+
+std::optional<SymbolTypeInfo> SemanticAnalyzer::lookup_type_info(const std::string& name) const {
+    auto symbol = lookup_symbol(name);
+    if (!symbol) {
+        return std::nullopt;
+    }
+
+    SymbolTypeInfo info;
+    info.type = symbol->type;
+    info.return_type = symbol->return_type;
+    info.is_subprogram = symbol->is_subprogram();
+    info.array_info = symbol->array_info;
+    info.record_info = &symbol->record_info;
+    return info;
 }
 
 void SemanticAnalyzer::visit(IntegerLiteralNode& /*n*/) {}
@@ -122,7 +121,8 @@ void SemanticAnalyzer::visit(RecordAccessNode& n) {
         n.record_expr->accept(*this);
     }
 
-    const RecordInfo* record_info = resolve_record_info(sym_table, n.record_expr.get());
+    const RecordInfo* record_info =
+        resolve_record_info(n.record_expr.get(), [this](const std::string& name) { return lookup_type_info(name); });
     if (!record_info) {
         report_semantic_error(n, "Field access requires a record value");
         return;
@@ -497,79 +497,10 @@ void SemanticAnalyzer::visit(ProgramNode& n) {
 }
 
 DataType SemanticAnalyzer::get_expr_type(ExpressionNode* expr) {
-    if (!expr) {
-        return DataType::TY_UNKNOWN;
-    }
-    if (dynamic_cast<IntegerLiteralNode*>(expr)) {
-        return DataType::TY_INTEGER;
-    }
-    if (dynamic_cast<RealLiteralNode*>(expr)) {
-        return DataType::TY_REAL;
-    }
-    if (dynamic_cast<BooleanLiteralNode*>(expr)) {
-        return DataType::TY_BOOLEAN;
-    }
-    if (dynamic_cast<CharLiteralNode*>(expr)) {
-        return DataType::TY_CHAR;
-    }
-    if (dynamic_cast<StringLiteralNode*>(expr)) {
-        return DataType::TY_CHAR;
-    }
-    if (auto* ident = dynamic_cast<IdentifierNode*>(expr)) {
-        return get_identifier_type(ident->name);
-    }
-    if (auto* arr = dynamic_cast<ArrayAccessNode*>(expr)) {
-        auto symbol = lookup_symbol(arr->array_name);
-        if (!symbol) {
-            return DataType::TY_UNKNOWN;
-        }
-        return symbol->array_info.element_type;
-    }
-    if (auto* record = dynamic_cast<RecordAccessNode*>(expr)) {
-        const RecordInfo* base_info = resolve_record_info(sym_table, record->record_expr.get());
-        if (!base_info) {
-            return DataType::TY_UNKNOWN;
-        }
-        const RecordField* field = find_record_field(*base_info, record->field_name);
-        return field ? field->type : DataType::TY_UNKNOWN;
-    }
-    if (auto* unary = dynamic_cast<UnaryExpressionNode*>(expr)) {
-        if (unary->op == UnaryOp::UOP_NOT) {
-            DataType operand_type = get_expr_type(unary->operand.get());
-            if (operand_type == DataType::TY_INTEGER) {
-                return DataType::TY_INTEGER;
-            }
-            return DataType::TY_BOOLEAN;
-        }
-        return get_expr_type(unary->operand.get());
-    }
-    if (auto* binary = dynamic_cast<BinaryExpressionNode*>(expr)) {
-        return TypeSystem::infer_binary_result(
-            binary->op,
-            get_expr_type(binary->left.get()),
-            get_expr_type(binary->right.get()));
-    }
-    if (auto* call = dynamic_cast<FunctionCallNode*>(expr)) {
-        auto symbol = lookup_symbol(call->func_name);
-        return symbol ? symbol->return_type : DataType::TY_UNKNOWN;
-    }
-    return DataType::TY_UNKNOWN;
-}
-
-DataType SemanticAnalyzer::get_identifier_type(const std::string& name) {
-    if (name == current_func_name) {
-        auto symbol = lookup_symbol(name);
-        return symbol ? symbol->return_type : DataType::TY_UNKNOWN;
-    }
-
-    auto symbol = lookup_symbol(name);
-    if (!symbol) {
-        return DataType::TY_UNKNOWN;
-    }
-    if (symbol->is_subprogram()) {
-        return symbol->return_type;
-    }
-    return symbol->type;
+    return resolve_expr_type(
+               expr,
+               [this](const std::string& name) { return lookup_type_info(name); })
+        .type;
 }
 
 } // namespace pascal_s

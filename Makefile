@@ -14,8 +14,8 @@ PARSER_CPP = $(BUILD_DIR)/parser.tab.cpp
 PARSER_HPP = $(BUILD_DIR)/parser.tab.hpp
 LEXER_CPP = $(BUILD_DIR)/lexer.cpp
 
-SOURCES = $(SRC_DIR)/main.cpp $(SRC_DIR)/ast.cpp $(SRC_DIR)/codegen.cpp $(SRC_DIR)/symbol_table.cpp $(SRC_DIR)/semantic_analyzer.cpp
-OBJECTS = $(BUILD_DIR)/main.o $(BUILD_DIR)/ast.o $(BUILD_DIR)/codegen.o $(BUILD_DIR)/symbol_table.o $(BUILD_DIR)/semantic_analyzer.o $(BUILD_DIR)/parser.tab.o $(BUILD_DIR)/lexer.o
+SOURCES = $(SRC_DIR)/main.cpp $(SRC_DIR)/ast.cpp $(SRC_DIR)/codegen.cpp $(SRC_DIR)/error.cpp $(SRC_DIR)/parser_state.cpp $(SRC_DIR)/symbol_table.cpp $(SRC_DIR)/semantic_analyzer.cpp $(SRC_DIR)/type_resolver.cpp
+OBJECTS = $(BUILD_DIR)/main.o $(BUILD_DIR)/ast.o $(BUILD_DIR)/codegen.o $(BUILD_DIR)/error.o $(BUILD_DIR)/parser_state.o $(BUILD_DIR)/symbol_table.o $(BUILD_DIR)/semantic_analyzer.o $(BUILD_DIR)/type_resolver.o $(BUILD_DIR)/parser.tab.o $(BUILD_DIR)/lexer.o
 
 TARGET = pascal-s-compiler
 
@@ -45,11 +45,20 @@ $(BUILD_DIR)/ast.o: $(SRC_DIR)/ast.cpp $(SRC_DIR)/ast.h
 $(BUILD_DIR)/codegen.o: $(SRC_DIR)/codegen.cpp $(SRC_DIR)/codegen.h
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $(SRC_DIR)/codegen.cpp -o $(BUILD_DIR)/codegen.o
 
+$(BUILD_DIR)/error.o: $(SRC_DIR)/error.cpp $(SRC_DIR)/error.h
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $(SRC_DIR)/error.cpp -o $(BUILD_DIR)/error.o
+
+$(BUILD_DIR)/parser_state.o: $(SRC_DIR)/parser_state.cpp $(SRC_DIR)/parser_state.h
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $(SRC_DIR)/parser_state.cpp -o $(BUILD_DIR)/parser_state.o
+
 $(BUILD_DIR)/symbol_table.o: $(SRC_DIR)/symbol_table.cpp $(SRC_DIR)/symbol_table.h
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $(SRC_DIR)/symbol_table.cpp -o $(BUILD_DIR)/symbol_table.o
 
 $(BUILD_DIR)/semantic_analyzer.o: $(SRC_DIR)/semantic_analyzer.cpp $(SRC_DIR)/semantic_analyzer.h
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $(SRC_DIR)/semantic_analyzer.cpp -o $(BUILD_DIR)/semantic_analyzer.o
+
+$(BUILD_DIR)/type_resolver.o: $(SRC_DIR)/type_resolver.cpp $(SRC_DIR)/type_resolver.h
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $(SRC_DIR)/type_resolver.cpp -o $(BUILD_DIR)/type_resolver.o
 
 $(BUILD_DIR)/parser.tab.o: $(PARSER_CPP)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $(PARSER_CPP) -o $(BUILD_DIR)/parser.tab.o

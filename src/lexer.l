@@ -135,6 +135,7 @@ ALNUM    [a-zA-Z0-9_]
     pascal_s::ErrorHandler::instance().lexical_error(
         std::string("Unexpected character: '") + yytext[0] + "'",
         yylineno,
-        yycolumn_start);
+        yycolumn_start,
+        yyleng);
 }
 %%

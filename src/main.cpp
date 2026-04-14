@@ -6,6 +6,7 @@
 #include "ast.h"
 #include "symbol_table.h"
 #include "error.h"
+#include "parser_state.h"
 #include "semantic_analyzer.h"
 #include "codegen.h"
 
@@ -61,6 +62,7 @@ int main(int argc, char* argv[]) {
     
     root_ast = nullptr;
     g_symbol_table.clear();
+    pascal_s::reset_parser_state();
     pascal_s::ErrorHandler::instance().clear();
     
     // Read source code lines for caret diagnostics

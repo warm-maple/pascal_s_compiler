@@ -1,4 +1,4 @@
 Semantic Error
 Undeclared identifier: missing_value
 missing_value
-^~~~~
+^

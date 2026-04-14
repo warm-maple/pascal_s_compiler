@@ -13,6 +13,7 @@ build-mingw/
 build-mingw2/
 test_output/
 course_tests/_work/
+course_tests/_strict_work/
 
 # 备份和临时文件
 *.bak

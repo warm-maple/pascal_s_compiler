@@ -1,6 +1,7 @@
 #pragma once
 #include "ast.h"
 #include "symbol_table.h"
+#include "type_resolver.h"
 #include <string>
 #include <unordered_map>
 
@@ -44,9 +45,9 @@ private:
     std::shared_ptr<SymbolEntry> lookup_symbol(const std::string& name);
     std::shared_ptr<const SymbolEntry> lookup_symbol(const std::string& name) const;
     bool is_builtin_procedure(const std::string& name) const;
+    std::optional<SymbolTypeInfo> lookup_type_info(const std::string& name) const;
 
     DataType get_expr_type(ExpressionNode* expr);
-    DataType get_identifier_type(const std::string& name);
 };
 
 } // namespace pascal_s

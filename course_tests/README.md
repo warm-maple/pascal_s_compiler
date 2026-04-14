@@ -19,6 +19,12 @@ Example:
 .\course_tests\run_course_tests.ps1 -CompilerPath .\build-mingw2\pascc.exe
 ```
 
+Strict C11 codegen check:
+
+```powershell
+.\course_tests\run_strict_c_checks.ps1 -CompilerPath .\build-mingw2\pascc.exe
+```
+
 Current coverage:
 
 - record layout and nested field access
@@ -30,3 +36,4 @@ Current coverage:
 - multi-argument `write` with string constants
 - semantic diagnostics for undeclared names, bad field access, bad reference arguments, and type mismatch
 - syntax diagnostics with caret output
+- strict C11 + `-pedantic-errors` validation for generated success-case C code
