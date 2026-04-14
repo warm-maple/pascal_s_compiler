@@ -1,0 +1,4 @@
+Syntax Error
+line 4
+begin
+^~~~~

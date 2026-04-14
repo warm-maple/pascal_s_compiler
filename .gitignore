@@ -4,20 +4,28 @@
 *.exe
 pascal-s-compiler
 output.c
+!course_tests/success/*.out
 
 # 构建目录
 build/
+build-cmake/
+build-mingw/
+build-mingw2/
 test_output/
+course_tests/_work/
 
 # 备份和临时文件
 *.bak
 *.zip
+~*
 
 # 测试数据（不应公开）
 userfiles/
 test_data*.json
 test.c
 debug_sym.cpp
+open_set/*.c
+user_tests/*.c
 
 # 系统文件
 .DS_Store

@@ -11,6 +11,10 @@ void RealLiteralNode::accept(ASTVisitor& visitor) {
     visitor.visit(*this);
 }
 
+void BooleanLiteralNode::accept(ASTVisitor& visitor) {
+    visitor.visit(*this);
+}
+
 void CharLiteralNode::accept(ASTVisitor& visitor) {
     visitor.visit(*this);
 }
@@ -24,6 +28,10 @@ void IdentifierNode::accept(ASTVisitor& visitor) {
 }
 
 void ArrayAccessNode::accept(ASTVisitor& visitor) {
+    visitor.visit(*this);
+}
+
+void RecordAccessNode::accept(ASTVisitor& visitor) {
     visitor.visit(*this);
 }
 

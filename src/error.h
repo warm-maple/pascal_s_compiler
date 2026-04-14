@@ -28,6 +28,7 @@ struct CompilerError {
 class ErrorHandler {
 private:
     std::vector<CompilerError> errors;
+    std::vector<std::string> source_lines; // Loaded lines
     bool in_panic_mode = false;
     std::set<std::pair<int, int>> reported_positions;  // 防雪崩：已报告位置
     
@@ -39,6 +40,10 @@ public:
     static ErrorHandler& instance() {
         static ErrorHandler inst;
         return inst;
+    }
+    
+    void set_source_lines(const std::vector<std::string>& lines) {
+        source_lines = lines;
     }
     
     // 词法错误
@@ -109,15 +114,29 @@ public:
     // 打印所有错误
     void print_errors(std::ostream& out = std::cerr) const {
         for (const auto& err : errors) {
-            out << "Error ";
+            out << "[";
             switch (err.type) {
-                case ErrorType::LEXICAL: out << "(Lexical)"; break;
-                case ErrorType::SYNTAX: out << "(Syntax)"; break;
-                case ErrorType::SEMANTIC: out << "(Semantic)"; break;
-                case ErrorType::CODE_GENERATION: out << "(Code Gen)"; break;
+                case ErrorType::LEXICAL: out << "Lexical Error"; break;
+                case ErrorType::SYNTAX: out << "Syntax Error"; break;
+                case ErrorType::SEMANTIC: out << "Semantic Error"; break;
+                case ErrorType::CODE_GENERATION: out << "Codegen Error"; break;
             }
-            out << " at line " << err.line << ":" << err.column 
+            out << "] line " << err.line << ", col " << err.column 
                 << ": " << err.message << std::endl;
+                
+            // Caret diagnostics (Clang style ~~~~^)
+            if (err.line > 0 && err.line <= static_cast<int>(source_lines.size())) {
+                std::string line_content = source_lines[err.line - 1];
+                out << "    " << line_content << std::endl;
+                if (err.column > 0) {
+                    out << "    ";
+                    for (int i = 0; i < err.column - 1 && i < static_cast<int>(line_content.length()); ++i) {
+                        out << (line_content[i] == '\t' ? '\t' : ' ');
+                    }
+                    out << "^~~~~" << std::endl;
+                }
+            }
+            out << std::endl;
         }
     }
     

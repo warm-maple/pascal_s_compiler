@@ -22,6 +22,7 @@ enum class DataType {
     TY_FUNCTION,
     TY_PROCEDURE,
     TY_VOID,
+    TY_RECORD,
     TY_UNKNOWN
 };
 
@@ -51,12 +52,29 @@ struct ArrayInfo {
     }
 };
 
+struct RecordInfo;
+
+// RECORD 字段信息
+struct RecordField {
+    std::string name;
+    DataType type = DataType::TY_INTEGER;
+    bool is_array = false;
+    ArrayInfo array_info;
+    std::shared_ptr<RecordInfo> record_info;
+};
+
+struct RecordInfo {
+    std::string struct_name; // Generated C struct name
+    std::vector<RecordField> fields;
+};
+
 // 参数信息
 struct ParameterInfo {
     std::string name;
     DataType type = DataType::TY_INTEGER;
     bool is_reference = false;  // var 参数
     ArrayInfo array_info;
+    RecordInfo record_info;
 };
 
 // AST 节点基类
@@ -95,6 +113,15 @@ public:
     std::string node_type() const override { return "RealLiteral"; }
     void accept(ASTVisitor& visitor) override;
     DataType get_type() const override { return DataType::TY_REAL; }
+};
+
+class BooleanLiteralNode : public ExpressionNode {
+public:
+    bool value;
+    BooleanLiteralNode(bool v = false) : value(v) {}
+    std::string node_type() const override { return "BooleanLiteral"; }
+    void accept(ASTVisitor& visitor) override;
+    DataType get_type() const override { return DataType::TY_BOOLEAN; }
 };
 
 class CharLiteralNode : public ExpressionNode {
@@ -137,6 +164,23 @@ public:
         indices.push_back(std::move(idx));
     }
     std::string node_type() const override { return "ArrayAccess"; }
+    void accept(ASTVisitor& visitor) override;
+    bool is_lvalue() const override { return true; }
+};
+
+// 结构体成员访问
+class RecordAccessNode : public ExpressionNode {
+public:
+    std::unique_ptr<ExpressionNode> record_expr;
+    std::string field_name;
+    
+    RecordAccessNode(std::unique_ptr<ExpressionNode> rec = nullptr, const std::string& field = "")
+        : record_expr(std::move(rec)), field_name(field) {}
+        
+    RecordAccessNode(ExpressionNode* rec, const char* field)
+        : record_expr(std::unique_ptr<ExpressionNode>(rec)), field_name(field) {}
+        
+    std::string node_type() const override { return "RecordAccess"; }
     void accept(ASTVisitor& visitor) override;
     bool is_lvalue() const override { return true; }
 };
@@ -351,6 +395,7 @@ public:
     DataType type = DataType::TY_INTEGER;
     bool is_array = false;
     ArrayInfo array_info;
+    RecordInfo record_info;
     bool is_const = false;
     std::unique_ptr<ExpressionNode> init_value;
     
@@ -407,10 +452,12 @@ public:
     virtual ~ASTVisitor() = default;
     virtual void visit(IntegerLiteralNode& n) = 0;
     virtual void visit(RealLiteralNode& n) = 0;
+    virtual void visit(BooleanLiteralNode& n) = 0;
     virtual void visit(CharLiteralNode& n) = 0;
     virtual void visit(StringLiteralNode& n) = 0;
     virtual void visit(IdentifierNode& n) = 0;
     virtual void visit(ArrayAccessNode& n) = 0;
+    virtual void visit(RecordAccessNode& n) = 0;
     virtual void visit(BinaryExpressionNode& n) = 0;
     virtual void visit(UnaryExpressionNode& n) = 0;
     virtual void visit(FunctionCallNode& n) = 0;
@@ -434,6 +481,7 @@ inline std::string type_to_string(DataType t) {
         case DataType::TY_BOOLEAN: return "boolean";
         case DataType::TY_CHAR: return "char";
         case DataType::TY_ARRAY: return "array";
+        case DataType::TY_RECORD: return "record";
         case DataType::TY_FUNCTION: return "function";
         case DataType::TY_PROCEDURE: return "procedure";
         case DataType::TY_VOID: return "void";

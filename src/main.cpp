@@ -6,6 +6,7 @@
 #include "ast.h"
 #include "symbol_table.h"
 #include "error.h"
+#include "semantic_analyzer.h"
 #include "codegen.h"
 
 extern FILE* yyin;
@@ -36,13 +37,14 @@ void write_file(const std::string& fn, const std::string& content) {
 
 int main(int argc, char* argv[]) {
     std::string input;
+    std::string output;
     
     // 解析命令行参数: pascc -i filename.pas
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "-i") && i+1 < argc) {
             input = argv[++i];
         } else if (!strcmp(argv[i], "-o") && i+1 < argc) {
-            i++; // skip -o arg
+            output = argv[++i];
         } else if (argv[i][0] != '-') {
             input = argv[i];
         }
@@ -53,11 +55,26 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
-    std::string output = derive_output_path(input);
+    if (output.empty()) {
+        output = derive_output_path(input);
+    }
     
     root_ast = nullptr;
     g_symbol_table.clear();
     pascal_s::ErrorHandler::instance().clear();
+    
+    // Read source code lines for caret diagnostics
+    std::vector<std::string> source_lines;
+    {
+        std::ifstream src_file(input);
+        if (src_file) {
+            std::string line;
+            while (std::getline(src_file, line)) {
+                source_lines.push_back(line);
+            }
+        }
+    }
+    pascal_s::ErrorHandler::instance().set_source_lines(source_lines);
     
     FILE* in = fopen(input.c_str(), "r");
     if (!in) {
@@ -79,6 +96,17 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
+    // Semantic Analysis Pass
+    pascal_s::SemanticAnalyzer analyzer;
+    root_ast->accept(analyzer);
+    g_symbol_table = analyzer.sym_table;
+    
+    if (pascal_s::ErrorHandler::instance().has_errors()) {
+        pascal_s::ErrorHandler::instance().print_errors();
+        return 1;
+    }
+    
+    // Code Generation Pass
     pascal_s::CodeGenerator cg;
     std::string c = cg.generate(root_ast);
     write_file(output, c);

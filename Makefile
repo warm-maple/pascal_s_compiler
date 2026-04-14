@@ -1,8 +1,8 @@
 # Pascal-S 编译器 Makefile
 
 CXX = g++
-BISON = bison
-FLEX = flex
+BISON ?= win_bison
+FLEX ?= win_flex
 
 CXXFLAGS = -std=c++17 -Wall -Wextra -O2
 INCLUDES = -Isrc -Ibuild
@@ -14,8 +14,8 @@ PARSER_CPP = $(BUILD_DIR)/parser.tab.cpp
 PARSER_HPP = $(BUILD_DIR)/parser.tab.hpp
 LEXER_CPP = $(BUILD_DIR)/lexer.cpp
 
-SOURCES = $(SRC_DIR)/main.cpp $(SRC_DIR)/ast.cpp
-OBJECTS = $(BUILD_DIR)/main.o $(BUILD_DIR)/ast.o $(BUILD_DIR)/parser.tab.o $(BUILD_DIR)/lexer.o
+SOURCES = $(SRC_DIR)/main.cpp $(SRC_DIR)/ast.cpp $(SRC_DIR)/codegen.cpp $(SRC_DIR)/symbol_table.cpp $(SRC_DIR)/semantic_analyzer.cpp
+OBJECTS = $(BUILD_DIR)/main.o $(BUILD_DIR)/ast.o $(BUILD_DIR)/codegen.o $(BUILD_DIR)/symbol_table.o $(BUILD_DIR)/semantic_analyzer.o $(BUILD_DIR)/parser.tab.o $(BUILD_DIR)/lexer.o
 
 TARGET = pascal-s-compiler
 
@@ -41,6 +41,15 @@ $(BUILD_DIR)/main.o: $(SRC_DIR)/main.cpp $(PARSER_HPP) src/codegen.h
 
 $(BUILD_DIR)/ast.o: $(SRC_DIR)/ast.cpp $(SRC_DIR)/ast.h
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $(SRC_DIR)/ast.cpp -o $(BUILD_DIR)/ast.o
+
+$(BUILD_DIR)/codegen.o: $(SRC_DIR)/codegen.cpp $(SRC_DIR)/codegen.h
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $(SRC_DIR)/codegen.cpp -o $(BUILD_DIR)/codegen.o
+
+$(BUILD_DIR)/symbol_table.o: $(SRC_DIR)/symbol_table.cpp $(SRC_DIR)/symbol_table.h
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $(SRC_DIR)/symbol_table.cpp -o $(BUILD_DIR)/symbol_table.o
+
+$(BUILD_DIR)/semantic_analyzer.o: $(SRC_DIR)/semantic_analyzer.cpp $(SRC_DIR)/semantic_analyzer.h
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $(SRC_DIR)/semantic_analyzer.cpp -o $(BUILD_DIR)/semantic_analyzer.o
 
 $(BUILD_DIR)/parser.tab.o: $(PARSER_CPP)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $(PARSER_CPP) -o $(BUILD_DIR)/parser.tab.o

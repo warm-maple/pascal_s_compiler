@@ -3,14 +3,16 @@
 #include <string>
 #include <algorithm>
 #include "ast.h"
+#include "error.h"
 #include "parser.tab.hpp"
 
-// BEGIN 和 flex 内部宏冲突，需要取消定义
-#ifdef BEGIN
-#undef BEGIN
-#endif
-
 extern int yylineno;
+int yycolumn = 1;
+int yycolumn_start = 1;
+
+#define YY_USER_ACTION \
+    yycolumn_start = yycolumn; \
+    yycolumn += yyleng;
 
 // 把标识符转成小写（Pascal 不区分大小写）
 static char* strdup_lower(const char* s) {
@@ -18,10 +20,18 @@ static char* strdup_lower(const char* s) {
     for (char* p = r; *p; ++p) *p = tolower(*p);
     return r;
 }
+
+static void adjust_column_after_multiline_token() {
+    const char* last_newline = strrchr(yytext, '\n');
+    if (last_newline) {
+        yycolumn = static_cast<int>(strlen(last_newline + 1)) + 1;
+    }
+}
 %}
 
 %option noyywrap
 %option yylineno
+%x PAREN_COMMENT
 
 DIGIT    [0-9]
 LETTER   [a-zA-Z_]
@@ -30,9 +40,12 @@ ALNUM    [a-zA-Z0-9_]
 %%
  /* 空白和注释 */
 [ \t\r]+  { /* 跳过空白 */ }
-\n        { /* 换行 */ }
-\{[^}]*\} { /* Pascal 块注释 { ... } */ }
-\(\*.*?\*\) { /* 另一种块注释 (* ... *) */ }
+\n        { yycolumn = 1; /* 换行 */ }
+\{[^}]*\} { adjust_column_after_multiline_token(); }
+"\(\*"   { BEGIN(PAREN_COMMENT); }
+<PAREN_COMMENT>"\*\)" { BEGIN(INITIAL); }
+<PAREN_COMMENT>\n     { yycolumn = 1; }
+<PAREN_COMMENT>.      { }
 \/\/.*    { /* 行注释 */ }
 
  /* Pascal-S 关键字（大小写不敏感，用字符类匹配） */
@@ -59,6 +72,7 @@ ALNUM    [a-zA-Z0-9_]
 [Cc][Hh][Aa][Rr]              { yylval.sval = strdup(yytext); return CHAR; }
 [Aa][Rr][Rr][Aa][Yy]          { yylval.sval = strdup(yytext); return ARRAY; }
 [Oo][Ff]                      { yylval.sval = strdup(yytext); return OF; }
+[Rr][Ee][Cc][Oo][Rr][Dd]      { yylval.sval = strdup(yytext); return RECORD; }
 
  /* 逻辑和算术关键字 */
 [Nn][Oo][Tt]                  { yylval.sval = strdup(yytext); return NOT; }
@@ -94,8 +108,8 @@ ALNUM    [a-zA-Z0-9_]
 \.\.        { return DOTDOT; }
 
  /* 特殊标识符：true/false/read/readln 等当作普通标识符处理 */
-[Tt][Rr][Uu][Ee]              { yylval.sval = strdup("true"); return IDENTIFIER; }
-[Ff][Aa][Ll][Ss][Ee]          { yylval.sval = strdup("false"); return IDENTIFIER; }
+[Tt][Rr][Uu][Ee]              { yylval.ival = 1; return BOOLEAN_LITERAL; }
+[Ff][Aa][Ll][Ss][Ee]          { yylval.ival = 0; return BOOLEAN_LITERAL; }
 [Rr][Ee][Aa][Dd]              { yylval.sval = strdup("read"); return IDENTIFIER; }
 [Rr][Ee][Aa][Dd][Ll][Nn]      { yylval.sval = strdup("readln"); return IDENTIFIER; }
 [Bb][Rr][Ee][Aa][Kk]          { yylval.sval = strdup("break"); return IDENTIFIER; }
@@ -117,5 +131,10 @@ ALNUM    [a-zA-Z0-9_]
 {LETTER}{ALNUM}* { yylval.sval = strdup_lower(yytext); return IDENTIFIER; }
 
  /* 忽略其他字符 */
-. { }
+. {
+    pascal_s::ErrorHandler::instance().lexical_error(
+        std::string("Unexpected character: '") + yytext[0] + "'",
+        yylineno,
+        yycolumn_start);
+}
 %%
