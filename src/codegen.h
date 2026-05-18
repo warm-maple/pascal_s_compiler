@@ -8,7 +8,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
-// 声明全局符号表（在 parser.y 中定义）
+// 声明全局符号表；代码生成阶段通过它读取已经完成语义绑定的名字与类型信息。
 extern pascal_s::SymbolTable g_symbol_table;
 
 namespace pascal_s {
@@ -36,6 +36,7 @@ public:
     void visit(CompoundStatementNode& n) override;
     void visit(IfStatementNode& n) override;
     void visit(WhileStatementNode& n) override;
+    void visit(RepeatUntilStatementNode& n) override;
     void visit(ForStatementNode& n) override;
     void visit(ProcedureCallNode& n) override;
     void visit(WriteStatementNode& n) override;

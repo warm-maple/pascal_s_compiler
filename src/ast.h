@@ -54,7 +54,7 @@ struct ArrayInfo {
 
 struct RecordInfo;
 
-// RECORD 字段信息
+// record 字段信息
 struct RecordField {
     std::string name;
     DataType type = DataType::TY_INTEGER;
@@ -64,7 +64,7 @@ struct RecordField {
 };
 
 struct RecordInfo {
-    std::string struct_name; // Generated C struct name
+    std::string struct_name; // 生成目标 C 代码时使用的 struct 名称
     std::vector<RecordField> fields;
 };
 
@@ -72,11 +72,14 @@ struct RecordInfo {
 struct ParameterInfo {
     std::string name;
     DataType type = DataType::TY_INTEGER;
-    bool is_reference = false;  // var 参数
+    bool is_reference = false;  // 表示 Pascal 中的 var 引用参数
     ArrayInfo array_info;
     RecordInfo record_info;
 };
 
+// AST 是整个编译流水线共享的中间表示：
+// parser 负责构造这些节点，semantic 负责检查它们，codegen 再把它们映射成 C 代码。
+// 因此这里的节点定义既要表达 Pascal-S 的语法结构，也要保留后续阶段需要的位置信息。
 // AST 节点基类
 class ASTNode {
 public:
@@ -196,7 +199,7 @@ public:
     BinaryOp op;
     std::unique_ptr<ExpressionNode> left;
     std::unique_ptr<ExpressionNode> right;
-    bool is_real_div = false;  // Pascal '/' 实数除法标记
+    bool is_real_div = false;  // 标记 Pascal 中的 '/' 实数除法
     
     BinaryExpressionNode(BinaryOp o = BinaryOp::OP_ADD,
                          std::unique_ptr<ExpressionNode> l = nullptr,
@@ -316,6 +319,24 @@ public:
           body(b ? std::unique_ptr<StatementNode>(b) : nullptr) {}
     
     std::string node_type() const override { return "WhileStatement"; }
+    void accept(ASTVisitor& visitor) override;
+};
+
+// repeat ... until 循环
+class RepeatUntilStatementNode : public StatementNode {
+public:
+    std::unique_ptr<CompoundStatementNode> body;
+    std::unique_ptr<ExpressionNode> condition;
+
+    RepeatUntilStatementNode(std::unique_ptr<CompoundStatementNode> b = nullptr,
+                             std::unique_ptr<ExpressionNode> cond = nullptr)
+        : body(std::move(b)), condition(std::move(cond)) {}
+
+    RepeatUntilStatementNode(CompoundStatementNode* b, ExpressionNode* cond)
+        : body(b ? std::unique_ptr<CompoundStatementNode>(b) : nullptr),
+          condition(cond ? std::unique_ptr<ExpressionNode>(cond) : nullptr) {}
+
+    std::string node_type() const override { return "RepeatUntilStatement"; }
     void accept(ASTVisitor& visitor) override;
 };
 
@@ -446,6 +467,9 @@ public:
 };
 
 // ============ 访问者模式 ============
+// 各阶段都遍历同一棵 AST，但关注点不同：
+// parser 只建树；SemanticAnalyzer 做类型检查和声明绑定；CodeGenerator 做目标代码映射。
+// 访问者接口把“节点结构”和“阶段行为”拆开，现场讲 AST 时最值得指给老师看的就是这里。
 
 class ASTVisitor {
 public:
@@ -465,6 +489,7 @@ public:
     virtual void visit(CompoundStatementNode& n) = 0;
     virtual void visit(IfStatementNode& n) = 0;
     virtual void visit(WhileStatementNode& n) = 0;
+    virtual void visit(RepeatUntilStatementNode& n) = 0;
     virtual void visit(ForStatementNode& n) = 0;
     virtual void visit(ProcedureCallNode& n) = 0;
     virtual void visit(WriteStatementNode& n) = 0;

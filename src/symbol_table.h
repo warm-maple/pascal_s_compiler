@@ -8,7 +8,7 @@
 
 namespace pascal_s {
 
-// 符号表条目
+// 符号表条目：一处声明在语义阶段落成一条记录，后续查找和类型检查都围绕它展开。
 class SymbolEntry {
 public:
     std::string name;
@@ -16,7 +16,8 @@ public:
     
     // 作用域信息
     int scope_level;
-    int offset;  // 栈帧偏移
+    // 这里的 offset 只表达当前作用域内的相对位置属性，不涉及机器级重定位。
+    int offset;
     
     // 额外信息 (根据类型)
     bool is_const;
@@ -37,7 +38,7 @@ public:
     }
 };
 
-// 符号表 (两级栈式结构)
+// 符号表采用作用域栈：进入函数/过程时压栈，退出时弹栈；lookup 总是从内层向外层查找。
 class SymbolTable {
 private:
     std::vector<std::unordered_map<std::string, std::shared_ptr<SymbolEntry>>> scopes;

@@ -29,7 +29,7 @@ struct CompilerError {
 class ErrorHandler {
 private:
     std::vector<CompilerError> errors;
-    std::vector<std::string> source_lines; // Loaded lines
+    std::vector<std::string> source_lines; // 预加载的源码各行文本，用于 caret 定位输出
     bool in_panic_mode = false;
     std::set<std::pair<int, int>> reported_positions;  // 防雪崩：已报告位置
     
@@ -62,7 +62,7 @@ public:
     
     bool is_in_panic_mode() const { return in_panic_mode; }
     
-    // 同步：丢弃 token 直到同步点
+    // 同步：结束当前 panic-mode 恢复段，允许 parser 在下一处同步点重新继续分析
     void synchronize();
     
     // 获取所有错误

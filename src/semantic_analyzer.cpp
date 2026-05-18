@@ -5,6 +5,7 @@ namespace pascal_s {
 
 namespace {
 
+// 诊断长度尽量贴近“用户眼里真正出错的那段名字”，方便 `caret diagnostics` 输出更稳定。
 int node_span(const ASTNode& node) {
     if (auto* ident = dynamic_cast<const IdentifierNode*>(&node)) {
         return static_cast<int>(ident->name.size());
@@ -245,6 +246,7 @@ void SemanticAnalyzer::visit(FunctionCallNode& n) {
 }
 
 void SemanticAnalyzer::visit(AssignmentNode& n) {
+    // 赋值检查是语义阶段最常见的约束：左边必须可赋值，右边类型必须兼容。
     if (n.target) {
         n.target->accept(*this);
     }
@@ -310,6 +312,20 @@ void SemanticAnalyzer::visit(WhileStatementNode& n) {
     }
     if (n.body) {
         n.body->accept(*this);
+    }
+}
+
+void SemanticAnalyzer::visit(RepeatUntilStatementNode& n) {
+    // Pascal 的 until 条件是“退出条件”，但语义上仍要求它最终是 boolean-compatible。
+    if (n.body) {
+        n.body->accept(*this);
+    }
+    if (n.condition) {
+        n.condition->accept(*this);
+        DataType cond_type = get_expr_type(n.condition.get());
+        if (cond_type != DataType::TY_BOOLEAN && cond_type != DataType::TY_INTEGER) {
+            report_semantic_error(*n.condition, "Repeat-until condition must be boolean-compatible");
+        }
     }
 }
 
@@ -460,6 +476,7 @@ void SemanticAnalyzer::visit(FunctionDeclarationNode& n) {
 }
 
 void SemanticAnalyzer::visit(ProgramNode& n) {
+    // 先注册所有子程序头，再检查普通声明和函数体，保证前向调用时名字已经可见。
     for (const auto& decl : n.declarations) {
         auto* func = dynamic_cast<FunctionDeclarationNode*>(decl.get());
         if (!func) {

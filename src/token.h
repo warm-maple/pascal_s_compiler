@@ -9,6 +9,7 @@ enum class TokenType {
     // 关键字
     KW_PROGRAM, KW_CONST, KW_VAR, KW_FUNCTION, KW_PROCEDURE,
     KW_BEGIN, KW_END, KW_IF, KW_THEN, KW_ELSE, KW_WHILE, KW_DO,
+    KW_REPEAT, KW_UNTIL,
     KW_FOR, KW_TO, KW_DOWNTO, KW_INTEGER, KW_REAL, KW_BOOLEAN,
     KW_CHAR, KW_ARRAY, KW_OF, KW_NOT, KW_AND, KW_DIV, KW_MOD,
     KW_OR,
@@ -90,6 +91,8 @@ inline std::string token_type_to_string(TokenType type) {
         case TokenType::KW_ELSE: return "ELSE";
         case TokenType::KW_WHILE: return "WHILE";
         case TokenType::KW_DO: return "DO";
+        case TokenType::KW_REPEAT: return "REPEAT";
+        case TokenType::KW_UNTIL: return "UNTIL";
         case TokenType::KW_FOR: return "FOR";
         case TokenType::KW_TO: return "TO";
         case TokenType::KW_DOWNTO: return "DOWNTO";

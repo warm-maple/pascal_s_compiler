@@ -1,0 +1,4 @@
+Semantic Error
+Reference parameter requires an assignable argument
+1 + 2
+^

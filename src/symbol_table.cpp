@@ -7,7 +7,7 @@ SymbolTable::SymbolTable() {
     current_offset = 0;
 }
 
-// 作用域管理
+// 进入新作用域时重新从 0 计数 offset；课程设计里它只用于语义层面的“位置”概念。
 void SymbolTable::enter_scope() {
     scopes.emplace_back();
     current_offset = 0;
@@ -23,7 +23,7 @@ int SymbolTable::current_scope_level() const {
     return static_cast<int>(scopes.size()) - 1; 
 }
 
-// 符号插入
+// insert 只向当前作用域写入，重复声明由当前层判重负责。
 bool SymbolTable::insert(const std::string& name, DataType type, 
             bool is_const, bool is_ref,
             const ArrayInfo& arr_info) {
@@ -38,7 +38,7 @@ bool SymbolTable::insert(const std::string& name, DataType type,
     return true;
 }
 
-// 查找符号 (从当前作用域向外)
+// lookup 按“最近作用域优先”查找，保证局部声明可以屏蔽外层同名标识符。
 std::shared_ptr<SymbolEntry> SymbolTable::lookup(const std::string& name) {
     for (int i = static_cast<int>(scopes.size()) - 1; i >= 0; --i) {
         auto it = scopes[i].find(name);
@@ -109,7 +109,7 @@ DataType TypeSystem::infer_binary_result(BinaryOp op, DataType left, DataType ri
     if (left == DataType::TY_REAL || right == DataType::TY_REAL) {
         return DataType::TY_REAL;
     }
-    // Pascal / 实数除法始终返回 real
+    // Pascal 中的 '/' 始终表示实数除法，因此结果类型固定提升到 real。
     if (op == BinaryOp::OP_DIV_REAL) {
         return DataType::TY_REAL;
     }
@@ -126,7 +126,7 @@ std::string TypeSystem::to_c_type(DataType t) {
     switch (t) {
         case DataType::TY_INTEGER: return "int";
         case DataType::TY_REAL: return "double";
-        case DataType::TY_BOOLEAN: return "int";  // C99 无原生 bool，后续可以用 #include <stdbool.h> 并返回 bool，为了配合 codegen 的行为，这里先保持不变，或修改为 bool
+        case DataType::TY_BOOLEAN: return "int";  // 当前类型系统默认把 boolean 落成 int，后端再决定是否引入 stdbool.h。
         case DataType::TY_CHAR: return "char";
         default: return "void";
     }

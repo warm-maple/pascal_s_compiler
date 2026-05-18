@@ -1,0 +1,4 @@
+Semantic Error
+Unknown record field: missing
+node.missing := 1;
+^

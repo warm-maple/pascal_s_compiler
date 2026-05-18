@@ -12,7 +12,7 @@ public:
     SemanticAnalyzer();
     ~SemanticAnalyzer() = default;
 
-    // Symbol Table owned by Semantic Analyzer
+    // 语义分析阶段自有的符号表：语法阶段不再直接写全局表，统一由这里完成声明绑定与查找。
     SymbolTable sym_table;
     const SymbolTable& symbol_table() const { return sym_table; }
 
@@ -32,6 +32,7 @@ public:
     void visit(CompoundStatementNode& n) override;
     void visit(IfStatementNode& n) override;
     void visit(WhileStatementNode& n) override;
+    void visit(RepeatUntilStatementNode& n) override;
     void visit(ForStatementNode& n) override;
     void visit(ProcedureCallNode& n) override;
     void visit(WriteStatementNode& n) override;

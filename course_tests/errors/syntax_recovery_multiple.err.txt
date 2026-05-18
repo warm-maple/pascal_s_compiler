@@ -1,0 +1,5 @@
+Syntax Error
+line 4
+begin
+line 6
+write(x);

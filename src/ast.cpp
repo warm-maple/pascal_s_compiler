@@ -64,6 +64,10 @@ void WhileStatementNode::accept(ASTVisitor& visitor) {
     visitor.visit(*this);
 }
 
+void RepeatUntilStatementNode::accept(ASTVisitor& visitor) {
+    visitor.visit(*this);
+}
+
 void ForStatementNode::accept(ASTVisitor& visitor) {
     visitor.visit(*this);
 }

@@ -18,6 +18,7 @@ extern pascal_s::ProgramNode* root_ast;
 
 static pascal_s::ParserState& ctx() { return pascal_s::parser_state(); }
 
+// parser.y 的职责是“按文法建 AST”；类型检查和符号表副作用已经挪到独立语义阶段。
 
 template <typename T>
 static T* set_node_position(T* node, int line = yylineno, int column = yycolumn_start) {
@@ -41,6 +42,79 @@ static T* adopt_node_position(T* node, const pascal_s::ASTNode* source) {
 
 static void reset_type_side_data() {
     ctx().reset_type_side_data();
+}
+
+// 语法恢复的出口统一走这里：清理解析期侧带类型信息，并结束当前 panic-mode 恢复段。
+static void finish_syntax_recovery() {
+    reset_type_side_data();
+    pascal_s::ErrorHandler::instance().synchronize();
+}
+
+static std::vector<pascal_s::StatementNode*> collect_unique_statements() {
+    std::vector<pascal_s::StatementNode*> unique;
+    for (auto* stmt : ctx().stmt_list) {
+        if (stmt && std::find(unique.begin(), unique.end(), stmt) == unique.end()) {
+            unique.push_back(stmt);
+        }
+    }
+    return unique;
+}
+
+// 复合语句和 repeat-until 都先把语句暂存到 stmt_list，结束时再收束成 CompoundStatementNode。
+static pascal_s::CompoundStatementNode* build_compound_from_stmt_list() {
+    auto* compound = set_node_position(new pascal_s::CompoundStatementNode());
+    for (auto* stmt : collect_unique_statements()) {
+        compound->add_statement(std::unique_ptr<pascal_s::StatementNode>(stmt));
+    }
+    ctx().stmt_list.clear();
+    return compound;
+}
+
+static void restore_parent_stmt_list() {
+    if (!ctx().stmt_list_stack.empty()) {
+        ctx().stmt_list = ctx().stmt_list_stack.back();
+        ctx().stmt_list_stack.pop_back();
+    } else {
+        ctx().stmt_list.clear();
+    }
+}
+
+static void append_variable_declarations(std::vector<char*>* names, pascal_s::DataType type) {
+    pascal_s::ArrayInfo array_info = ctx().last_array_info;
+    pascal_s::RecordInfo record_info = ctx().last_record_info;
+    for (char* name : *names) {
+        auto* var_decl = set_node_position(new pascal_s::VariableDeclarationNode(name, type));
+        var_decl->is_array = (type == pascal_s::DataType::TY_ARRAY);
+        var_decl->array_info = array_info;
+        if (type == pascal_s::DataType::TY_RECORD || array_info.element_type == pascal_s::DataType::TY_RECORD) {
+            var_decl->record_info = record_info;
+        }
+        if (!ctx().pending_local_var_decls.empty()) {
+            ctx().pending_local_var_decls.back().push_back(var_decl);
+        } else {
+            ctx().pending_var_decls.push_back(var_decl);
+        }
+        free(name);
+    }
+    delete names;
+}
+
+static void append_record_fields(std::vector<char*>* names, pascal_s::DataType type) {
+    pascal_s::ArrayInfo array_info = ctx().last_array_info;
+    pascal_s::RecordInfo record_info = ctx().last_record_info;
+    for (char* name : *names) {
+        pascal_s::RecordField field;
+        field.name = name;
+        field.type = type;
+        field.is_array = (type == pascal_s::DataType::TY_ARRAY);
+        field.array_info = array_info;
+        if (type == pascal_s::DataType::TY_RECORD || array_info.element_type == pascal_s::DataType::TY_RECORD) {
+            field.record_info = std::make_shared<pascal_s::RecordInfo>(record_info);
+        }
+        ctx().record_info_stack.back().fields.push_back(std::move(field));
+        free(name);
+    }
+    delete names;
 }
 
 static void assign_record_struct_names(pascal_s::RecordInfo& record_info) {
@@ -85,7 +159,7 @@ static pascal_s::BinaryOp relop_to_binop(const char* op) {
 %token <cval> CHAR_LITERAL
 
 %token PROGRAM CONST VAR FUNCTION PROCEDURE
-%token BEGIN_KW END IF THEN ELSE WHILE DO FOR TO DOWNTO
+%token BEGIN_KW END IF THEN ELSE WHILE DO REPEAT UNTIL FOR TO DOWNTO
 %token INTEGER REAL BOOLEAN CHAR ARRAY OF RECORD
 %token NOT AND OR
 %token DIV MOD
@@ -168,28 +242,45 @@ const_item:
           ctx().pending_var_decls.push_back(var_decl);
           free($1);
       }
+    | IDENTIFIER COLON type_decl RELOP expr error {
+          auto* var_decl = set_node_position(new pascal_s::VariableDeclarationNode($1, $3));
+          var_decl->is_const = true;
+          var_decl->init_value.reset($5);
+          ctx().pending_var_decls.push_back(var_decl);
+          finish_syntax_recovery();
+          yyerrok;
+          free($1);
+      }
+    | IDENTIFIER RELOP expr error {
+          pascal_s::DataType dtype = pascal_s::DataType::TY_INTEGER;
+          if (dynamic_cast<pascal_s::BooleanLiteralNode*>($3)) {
+              dtype = pascal_s::DataType::TY_BOOLEAN;
+          } else if (dynamic_cast<pascal_s::CharLiteralNode*>($3)) {
+              dtype = pascal_s::DataType::TY_CHAR;
+          } else if (dynamic_cast<pascal_s::RealLiteralNode*>($3)) {
+              dtype = pascal_s::DataType::TY_REAL;
+          } else if (dynamic_cast<pascal_s::StringLiteralNode*>($3)) {
+              dtype = pascal_s::DataType::TY_CHAR;
+          }
+          auto* var_decl = set_node_position(new pascal_s::VariableDeclarationNode($1, dtype));
+          var_decl->is_const = true;
+          var_decl->init_value.reset($3);
+          ctx().pending_var_decls.push_back(var_decl);
+          finish_syntax_recovery();
+          yyerrok;
+          free($1);
+      }
 ;
 
 var_list: var_list var_def | var_def;
 var_def: name_list COLON type_decl SEMICOLON {
-    pascal_s::ArrayInfo array_info = ctx().last_array_info;
-    pascal_s::RecordInfo record_info = ctx().last_record_info;
-    for (char* name : *$1) {
-        auto* var_decl = set_node_position(new pascal_s::VariableDeclarationNode(name, $3));
-        var_decl->is_array = ($3 == pascal_s::DataType::TY_ARRAY);
-        var_decl->array_info = array_info;
-        if ($3 == pascal_s::DataType::TY_RECORD || array_info.element_type == pascal_s::DataType::TY_RECORD) {
-            var_decl->record_info = record_info;
-        }
-        if (!ctx().pending_local_var_decls.empty()) {
-            ctx().pending_local_var_decls.back().push_back(var_decl);
-        } else {
-            ctx().pending_var_decls.push_back(var_decl);
-        }
-        free(name);
-    }
-    delete $1;
+    append_variable_declarations($1, $3);
     reset_type_side_data();
+}
+| name_list COLON type_decl error {
+    append_variable_declarations($1, $3);
+    finish_syntax_recovery();
+    yyerrok;
 };
 name_list: IDENTIFIER {
     $$ = new std::vector<char*>();
@@ -254,21 +345,13 @@ record_field_list:
 
 record_field:
       name_list COLON type_decl SEMICOLON {
-          pascal_s::ArrayInfo array_info = ctx().last_array_info;
-          pascal_s::RecordInfo record_info = ctx().last_record_info;
-          for (char* name : *$1) {
-              pascal_s::RecordField field;
-              field.name = name;
-              field.type = $3;
-              field.is_array = ($3 == pascal_s::DataType::TY_ARRAY);
-              field.array_info = array_info;
-              if ($3 == pascal_s::DataType::TY_RECORD || array_info.element_type == pascal_s::DataType::TY_RECORD) {
-                  field.record_info = std::make_shared<pascal_s::RecordInfo>(record_info);
-              }
-              ctx().record_info_stack.back().fields.push_back(std::move(field));
-              free(name);
-          }
-          delete $1;
+          append_record_fields($1, $3);
+          reset_type_side_data();
+      }
+    | name_list COLON type_decl error {
+          append_record_fields($1, $3);
+          finish_syntax_recovery();
+          yyerrok;
           reset_type_side_data();
       }
 ;
@@ -330,7 +413,14 @@ func_hdr: FUNCTION IDENTIFIER params COLON type_decl SEMICOLON {
 
 params: LPAREN { ctx().func_params.clear(); } param_lst RPAREN { }
       | LPAREN RPAREN { ctx().func_params.clear(); };
-param_lst: param_lst SEMICOLON param_grp | param_grp;
+param_lst:
+      param_lst SEMICOLON param_grp
+    | param_lst error param_grp {
+          finish_syntax_recovery();
+          yyerrok;
+      }
+    | param_grp
+;
 param_grp: VAR name_list COLON type_decl {
     pascal_s::ArrayInfo array_info = ctx().last_array_info;
     pascal_s::RecordInfo record_info = ctx().last_record_info;
@@ -368,27 +458,39 @@ param_grp: VAR name_list COLON type_decl {
     reset_type_side_data();
 };
 
-compound_stmt: BEGIN_KW {
+compound_begin: BEGIN_KW {
+    // 进入 begin...end 时切换到新的暂存列表，避免把外层语句直接混进当前块。
     ctx().stmt_list_stack.push_back(ctx().stmt_list);
     ctx().stmt_list.clear();
-} stmt_seq END {
-    auto* cs = set_node_position(new pascal_s::CompoundStatementNode());
-    std::vector<pascal_s::StatementNode*> seen;
-    for (auto* s : ctx().stmt_list) {
-        if (s && std::find(seen.begin(), seen.end(), s) == seen.end()) {
-            cs->add_statement(std::unique_ptr<pascal_s::StatementNode>(s));
-            seen.push_back(s);
-        }
-    }
-    ctx().stmt_list.clear();
-    if (!ctx().stmt_list_stack.empty()) {
-        ctx().stmt_list = ctx().stmt_list_stack.back();
-        ctx().stmt_list_stack.pop_back();
-    }
-    ctx().stmt_result = cs;
 };
 
-stmt_seq: stmt_seq SEMICOLON stmt | stmt;
+compound_stmt: compound_begin stmt_seq END {
+    auto* cs = build_compound_from_stmt_list();
+    restore_parent_stmt_list();
+    ctx().stmt_result = cs;
+}
+| compound_begin stmt_seq error END {
+    auto* cs = build_compound_from_stmt_list();
+    restore_parent_stmt_list();
+    ctx().stmt_result = cs;
+    finish_syntax_recovery();
+    yyerrok;
+};
+
+stmt_seq:
+      stmt_seq SEMICOLON stmt
+    | stmt_seq error stmt {
+          // 这里的同步点对应“上一条语句坏了，但还能继续读下一条语句”。
+          finish_syntax_recovery();
+          yyerrok;
+      }
+    | stmt_seq SEMICOLON error {
+          // 缺失语句体或分号后的坏片段，会在遇到下一处同步记号后恢复。
+          finish_syntax_recovery();
+          yyerrok;
+      }
+    | stmt
+;
 
 stmt: variable_ref ASSIGN expr {
     ctx().stmt_result = adopt_node_position(new pascal_s::AssignmentNode($1, $3), $1);
@@ -401,6 +503,7 @@ stmt: variable_ref ASSIGN expr {
 }
 | if_stmt { ctx().stmt_list.push_back(ctx().stmt_result); $<stmt>$ = ctx().stmt_result; }
 | while_stmt { ctx().stmt_list.push_back(ctx().stmt_result); $<stmt>$ = ctx().stmt_result; }
+| repeat_stmt { ctx().stmt_list.push_back(ctx().stmt_result); $<stmt>$ = ctx().stmt_result; }
 | for_stmt { ctx().stmt_list.push_back(ctx().stmt_result); $<stmt>$ = ctx().stmt_result; }
 | proc_call { ctx().stmt_list.push_back(ctx().stmt_result); $<stmt>$ = ctx().stmt_result; }
 | write_stmt { ctx().stmt_list.push_back(ctx().stmt_result); $<stmt>$ = ctx().stmt_result; }
@@ -426,6 +529,16 @@ while_stmt: WHILE expr DO stmt {
     auto* body = $<stmt>4;
     if (!ctx().stmt_list.empty() && ctx().stmt_list.back() == body) ctx().stmt_list.pop_back();
     ctx().stmt_result = adopt_node_position(new pascal_s::WhileStatementNode($2, body), $2);
+};
+
+repeat_stmt: REPEAT {
+    // repeat 的语句体也复用 stmt_list/CompoundStatementNode 这套收束逻辑。
+    ctx().stmt_list_stack.push_back(ctx().stmt_list);
+    ctx().stmt_list.clear();
+} stmt_seq UNTIL expr {
+    auto* body = build_compound_from_stmt_list();
+    restore_parent_stmt_list();
+    ctx().stmt_result = adopt_node_position(new pascal_s::RepeatUntilStatementNode(body, $5), body);
 };
 
 for_stmt: FOR IDENTIFIER ASSIGN expr TO expr DO stmt {
@@ -615,6 +728,11 @@ index_lst: index_lst COMMA expr { $1->push_back($3); $$ = $1; }
 %%
 
 void yyerror(const char* m) {
-    pascal_s::ErrorHandler::instance().syntax_error(m, yylineno, yycolumn_start, std::max(yyleng, 1));
+    auto& err = pascal_s::ErrorHandler::instance();
+    if (!err.is_in_panic_mode()) {
+        // 进入 panic-mode 恢复后，后续 token 丢弃由 error 产生式负责；这里避免同一处错误雪崩重复报。
+        err.syntax_error(m, yylineno, yycolumn_start, std::max(yyleng, 1));
+        err.enter_panic_mode();
+    }
 }
 

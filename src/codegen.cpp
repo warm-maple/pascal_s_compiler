@@ -2,9 +2,7 @@
 
 namespace pascal_s {
 
-// Utilities and local functions can be declared here or copied verbatim over without `inline` keywords.
-
-// CodeGenerator::c_operator
+// 下面这些局部工具函数负责把 Pascal-S 语义映射成具体的 C11 输出细节。
 std::string CodeGenerator::c_operator(BinaryOp op) {
     switch (op) {
         case BinaryOp::OP_ADD: return "+";
@@ -26,7 +24,7 @@ std::string CodeGenerator::c_operator(BinaryOp op) {
 }
 
 std::string CodeGenerator::c_type(DataType t) {
-    // Change TY_REAL mapping from double to float
+    // 目标语言里把 real 映射成 float，保持与当前项目其余输出约定一致。
     if (t == DataType::TY_REAL) {
         return "float";
     }
@@ -57,6 +55,7 @@ void CodeGenerator::indent() {
 }
 
 void CodeGenerator::collect_record_definition(const RecordInfo& record_info) {
+    // `record` 定义要先递归收集内层结构，再输出外层 `struct`，保证目标 C 代码中的嵌套类型可见。
     if (record_info.struct_name.empty()) {
         return;
     }
@@ -559,6 +558,7 @@ void CodeGenerator::emit_call_argument_list(
 
 void CodeGenerator::visit(FunctionCallNode& n) {
     if (call_has_side_effects(n.arguments)) {
+        // Pascal 实参求值顺序和引用参数取址需要稳定落地，因此这里先绑定临时变量，再发起真正调用。
         output << "(";
         std::vector<std::string> temp_names(n.arguments.size());
         bool first = true;
@@ -612,6 +612,7 @@ void CodeGenerator::visit(AssignmentNode& n) {
     if (!current_func_name.empty()) {
         if (auto* target = dynamic_cast<IdentifierNode*>(n.target.get())) {
             if (target->name == current_func_name) {
+                // Pascal 函数通过“给函数名赋值”返回结果，这里统一改写成内部返回槽 `_retval`。
                 output << "_retval = ";
                 n.value->accept(*this);
                 output << ";\n";
@@ -696,6 +697,31 @@ void CodeGenerator::visit(WhileStatementNode& n) {
     } else {
         output << "\n";
     }
+}
+
+void CodeGenerator::visit(RepeatUntilStatementNode& n) {
+    indent();
+    // repeat-until 对应 C 的 do-while，但 until 是退出条件，因此这里生成 !condition。
+    output << "do {\n";
+    indent_level++;
+
+    if (n.body) {
+        for (const auto& stmt : n.body->statements) {
+            if (stmt) {
+                stmt->accept(*this);
+            }
+        }
+    }
+
+    indent_level--;
+    indent();
+    output << "} while (!(";
+    if (n.condition) {
+        n.condition->accept(*this);
+    } else {
+        output << "0";
+    }
+    output << "));\n";
 }
 
 void CodeGenerator::visit(ForStatementNode& n) {
@@ -927,6 +953,7 @@ void CodeGenerator::visit(FunctionDeclarationNode& n) {
     }
     
     if (n.return_type != DataType::TY_VOID) {
+        // 非 void Pascal 函数统一显式引入 _retval，避免把“函数名赋值”散落到多个分支里。
         indent();
         output << c_type(n.return_type) << " _retval = 0;\n";
     }
@@ -974,7 +1001,7 @@ bool CodeGenerator::is_ref_param(const std::string& name) {
 }
 
 void CodeGenerator::visit(ProgramNode& /*n*/) {
-    // ProgramNode 由 generate() 函数处理
+    // ProgramNode 的整体输出顺序由 generate() 统一控制，这里不再重复处理。
 }
 
 } // namespace pascal_s

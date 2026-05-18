@@ -14,11 +14,16 @@ build-mingw2/
 test_output/
 course_tests/_work/
 course_tests/_strict_work/
+submission/**/_strict_work/
 
 # 备份和临时文件
 *.bak
 *.zip
 ~*
+parser_debug.cpp
+parser_debug.hpp
+parser_debug.output
+docs/presentation/_qa_final_defense_after/
 
 # 测试数据（不应公开）
 userfiles/
@@ -27,6 +32,7 @@ test.c
 debug_sym.cpp
 open_set/*.c
 user_tests/*.c
+course_tests/success/*.c
 
 # 系统文件
 .DS_Store

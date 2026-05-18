@@ -65,7 +65,7 @@ int main(int argc, char* argv[]) {
     pascal_s::reset_parser_state();
     pascal_s::ErrorHandler::instance().clear();
     
-    // Read source code lines for caret diagnostics
+    // 预读源码文本，后续 `caret diagnostics` 需要直接回显原始代码行并画出定位箭头。
     std::vector<std::string> source_lines;
     {
         std::ifstream src_file(input);
@@ -88,6 +88,7 @@ int main(int argc, char* argv[]) {
     int r = yyparse();
     fclose(in);
     
+    // 语法阶段一旦留下错误，后续不再进入 semantic/codegen，避免在半截 AST 上继续传播问题。
     if (r != 0 || pascal_s::ErrorHandler::instance().has_errors()) {
         pascal_s::ErrorHandler::instance().print_errors();
         return 1;
@@ -98,7 +99,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
-    // Semantic Analysis Pass
+    // 主控流水线：parse -> semantic -> codegen。每一阶段都在前一阶段“无错误”的前提下运行。
     pascal_s::SemanticAnalyzer analyzer;
     root_ast->accept(analyzer);
     g_symbol_table = analyzer.sym_table;
@@ -108,7 +109,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
-    // Code Generation Pass
+    // 代码生成阶段只接收已经通过语义检查的 AST，保证输出的 C 源码是可信结果。
     pascal_s::CodeGenerator cg;
     std::string c = cg.generate(root_ast);
     write_file(output, c);

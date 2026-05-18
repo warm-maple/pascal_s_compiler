@@ -3,6 +3,7 @@
 
 namespace pascal_s {
 
+// 这组函数是共享类型查询入口：语义分析和代码生成都通过它们理解表达式、数组与 `record` 字段类型。
 const RecordField* find_record_field(const RecordInfo& record_info, const std::string& field_name) {
     for (const auto& field : record_info.fields) {
         if (field.name == field_name) {
@@ -47,6 +48,7 @@ const RecordInfo* resolve_record_info(ExpressionNode* expr, const SymbolLookup& 
 }
 
 ResolvedType resolve_expr_type(ExpressionNode* expr, const SymbolLookup& lookup) {
+    // 这里不做“是否合法”判定，只回答“这个表达式在当前上下文里被看作什么类型”。
     if (!expr) {
         return {};
     }

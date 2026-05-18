@@ -10,6 +10,8 @@ extern int yylineno;
 int yycolumn = 1;
 int yycolumn_start = 1;
 
+// 每次匹配到词法单元时，都先记录起始列号，再把当前列推进到单元末尾。
+// 这样 parser 和错误处理模块拿到 token 后，还能精确回到源码中的具体位置。
 #define YY_USER_ACTION \
     yycolumn_start = yycolumn; \
     yycolumn += yyleng;
@@ -31,6 +33,8 @@ static void adjust_column_after_multiline_token() {
 
 %option noyywrap
 %option yylineno
+/* 进入 (* ... *) 注释时切换到独立状态，直到读到配对的结束符再返回正常扫描。
+   这里不产生 token，只负责正确跳过内容并维护行列号。 */
 %x PAREN_COMMENT
 
 DIGIT    [0-9]
@@ -61,6 +65,8 @@ ALNUM    [a-zA-Z0-9_]
 [Ee][Ll][Ss][Ee]              { yylval.sval = strdup(yytext); return ELSE; }
 [Ww][Hh][Ii][Ll][Ee]          { yylval.sval = strdup(yytext); return WHILE; }
 [Dd][Oo]                      { yylval.sval = strdup(yytext); return DO; }
+[Rr][Ee][Pp][Ee][Aa][Tt]      { yylval.sval = strdup(yytext); return REPEAT; }
+[Uu][Nn][Tt][Ii][Ll]          { yylval.sval = strdup(yytext); return UNTIL; }
 [Ff][Oo][Rr]                  { yylval.sval = strdup(yytext); return FOR; }
 [Tt][Oo]                      { yylval.sval = strdup(yytext); return TO; }
 [Dd][Oo][Ww][Nn][Tt][Oo]      { yylval.sval = strdup(yytext); return DOWNTO; }
@@ -127,7 +133,9 @@ ALNUM    [a-zA-Z0-9_]
     return STRING_LITERAL;
 }
 
- /* 标识符（转小写存储） */
+ /* 标识符（转小写存储）
+    yylex() 把 token 类型和 yylval 一起交给 yyparse()，因此这里除了返回 IDENTIFIER，
+    还要把词素统一转成小写，方便后续语法和语义阶段按 Pascal 的大小写不敏感规则处理。 */
 {LETTER}{ALNUM}* { yylval.sval = strdup_lower(yytext); return IDENTIFIER; }
 
  /* 忽略其他字符 */

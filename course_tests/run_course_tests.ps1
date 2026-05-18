@@ -24,6 +24,9 @@ $errorCases = Get-ChildItem ".\course_tests\errors" -Filter *.pas | Sort-Object 
 $failures = New-Object System.Collections.Generic.List[string]
 $passed = 0
 
+# 成功样例的验证链路是：
+# Pascal-S -> 生成 C -> gcc 编译 -> 运行可执行文件 -> 对比期望输出。
+# 这能同时覆盖编译器本身和生成目标代码是否真的可运行。
 foreach ($case in $successCases) {
     $base = Join-Path $WorkDir $case.BaseName
     $cFile = "$base.c"
@@ -68,6 +71,8 @@ foreach ($case in $successCases) {
     $passed++
 }
 
+# 错误样例不要求继续生成可执行文件，而是要求编译器在失败时输出正确的诊断片段。
+# .err.txt 中保存的是关键子串，便于容忍行号之外的小格式差异。
 foreach ($case in $errorCases) {
     $stderr = & $CompilerPath $case.FullName -o (Join-Path $WorkDir ($case.BaseName + ".c")) 2>&1 | Out-String
     $expectedFile = Join-Path $case.DirectoryName ($case.BaseName + ".err.txt")
